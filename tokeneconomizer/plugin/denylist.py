@@ -381,20 +381,28 @@ def _git_tracked(repo_root, rel):
         return False
 
 
-def codex_config_error(repo_root, cli="codex", timeout=30):
-    """Codex's own complaint about the configuration it would load here, or None.
-
-    `codex features list` loads the whole layered configuration and calls no model, so a file
-    that would break the person's next session fails here first. Silent (None) when the CLI is
-    not installed, or the project is untrusted and its file is not loaded at all."""
+def codex_features_list(repo_root, cli="codex", timeout=30):
+    """`codex features list`, run in the repository: it loads the whole layered configuration
+    and calls no model. None when the CLI is not installed or did not run."""
     from .sidecall import program
     if not shutil.which(cli):
         return None
     try:
-        out = subprocess.run([*program(cli), "features", "list"], capture_output=True,
-                             encoding="utf-8", errors="replace", cwd=repo_root, timeout=timeout,
-                             env=dict(os.environ, TE_SIDECALL="1"))
+        return subprocess.run([*program(cli), "features", "list"], capture_output=True,
+                              encoding="utf-8", errors="replace", cwd=repo_root,
+                              timeout=timeout, env=dict(os.environ, TE_SIDECALL="1"))
     except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def codex_config_error(repo_root, cli="codex", timeout=30):
+    """Codex's own complaint about the configuration it would load here, or None.
+
+    `codex features list` fails on a file that would break the person's next session, so it
+    fails here first. Silent (None) when the CLI is not installed, or the project is untrusted
+    and its file is not loaded at all."""
+    out = codex_features_list(repo_root, cli, timeout)
+    if out is None:
         return None
     return None if out.returncode == 0 else ((out.stderr or out.stdout).strip()[:500]
                                              or f"exit {out.returncode}")
