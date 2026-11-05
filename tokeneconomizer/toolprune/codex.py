@@ -59,8 +59,6 @@ CAPABILITY_DESCRIPTIONS = {
         "human available inside a task."),
 }
 
-CAPABILITIES = tuple(sorted(CAPABILITY_DESCRIPTIONS))
-
 _ITEM_TYPES_BY_CAPABILITY = {
     "collaboration": frozenset((
         "spawn_agent", "send_input", "send_message", "followup_task",
@@ -603,11 +601,3 @@ class CodexUntoolProfile:
         self.save()
         self._pending = None
         return record
-
-    def debug_state(self):
-        state = copy.deepcopy(self.state)
-        state["next_logical_mask"] = list(state.get("current_pruned") or ())
-        state["next_relay_mask"] = relay_capabilities(state.get("current_pruned") or ())
-        state["core_capabilities"] = list(CORE_CAPABILITIES)
-        state["state_path"] = self.path
-        return state

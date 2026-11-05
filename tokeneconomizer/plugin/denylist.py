@@ -47,7 +47,6 @@ import subprocess
 import time
 
 from .. import trace
-from . import adapter as live_adapter
 
 SETTINGS_REL = os.path.join(".claude", "settings.local.json")
 CODEX_CONFIG_REL = os.path.join(".codex", "config.toml")

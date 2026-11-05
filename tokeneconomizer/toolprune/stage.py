@@ -28,7 +28,7 @@ class ToolingStage(Stage):
     name = "tooling"
 
     def __init__(self, cfg, agent, optimizer_model,
-                 untool_runner=None, judge_tool_runner=None, adapter=None,
+                 judge_tool_runner=None, adapter=None,
                  repo=None, results_root=None, fresh=False):
         self.cfg = cfg
         self.agent = agent

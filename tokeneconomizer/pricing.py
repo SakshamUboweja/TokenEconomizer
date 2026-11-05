@@ -97,17 +97,13 @@ AGENT_DEFAULT_MODEL = {
 
 # Claude-family price ratios (Opus/Sonnet/Haiku share them). Used as the default when a
 # row has no resolvable model id (legacy rows, claude/copilot agents) so those stay
-# byte-identical to historical behavior. Also the value of the back-compat WEIGHTS alias.
+# byte-identical to historical behavior.
 WEIGHTS_CLAUDE = {
     "input": 1.0,         # input_tokens = fresh/uncached prompt tokens
     "cache_read": 0.10,   # cache_read_input_tokens
     "cache_write": 1.25,  # cache_creation_input_tokens
     "output": 5.0,        # output_tokens (completion)
 }
-# Back-compat: modules that read pricing.WEIGHTS directly (figures, costmodel) were
-# written against the Claude curve; keep that meaning. Per-row/per-model selection is via
-# weights_for(); effective_tokens() applies it automatically.
-WEIGHTS = WEIGHTS_CLAUDE
 
 _BREAKDOWN_KEYS = ("input_tokens", "cache_read_input_tokens",
                    "cache_creation_input_tokens", "output_tokens")
