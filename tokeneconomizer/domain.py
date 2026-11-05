@@ -2,8 +2,10 @@
 
 The mechanisms are domain-neutral; what is specific to a domain -- how its logs read, which
 tools are its work surface, which words name its interpreters and test runners -- enters only
-through these methods. The plugin's adapter is `plugin.adapter.LiveAdapter` (a real repository
-in a person's session); the benchmark adapters live in `experiments/te_bench/adapters/`.
+through these methods. The benchmark adapters in `experiments/te_bench/adapters/` implement all
+of them; the plugin's `plugin.adapter.LiveAdapter` (a real repository in a person's session)
+implements only the ones its stages call: `tool_usage`, `parse_catalog_with_source`,
+`protected_tools` and `env_vocabulary`.
 
   load_trajectory      -> every mechanism's view of a finished session
   tool_usage           -> the tools a session used (tool pruning's evidence)

@@ -1,8 +1,9 @@
-"""`LiveAdapter`: the DomainAdapter for a real repository in a real session.
+"""`LiveAdapter`: the domain adapter for a real repository in a real session.
 
 The mechanisms read their domain only through a DomainAdapter (`tokeneconomizer.domain`), so running
 `PrefixStage` and `ToolingStage` on live sessions needs no mechanism edit -- only an adapter whose
-answers fit an interactive session instead of a sealed benchmark task:
+answers fit an interactive session instead of a sealed benchmark task. It implements just the
+DomainAdapter methods those two stages call:
 
   * `protected_tools` adds what a PERSON needs to the work surface. The benchmark protected set
     keeps Bash/Read/Edit/...; `toolprune.tools.INAPPLICABLE_TOOLS` then treats AskUserQuestion, plan
@@ -21,7 +22,7 @@ answers fit an interactive session instead of a sealed benchmark task:
     The repository's markers only pick how a script run through its shebang is spelled
     (`package.json` alone -> `node`). The experiments' narrower vocabularies stay selectable
     (`vocabulary=python-git` / `node-web`).
-  * `problem_statements` is empty: there is no issue text to give the per-task tool judge.
+  * `tool_usage` is the host's own reading of its session log.
 """
 import dataclasses
 import fnmatch
@@ -29,7 +30,6 @@ import json
 import os
 
 from .. import trace
-from ..loopguard import state_from_trajectory
 from ..microskills import GENERIC, NODE_WEB, PYTHON_GIT
 from ..toolprune.tools import PROTECTED_TOOLS
 
@@ -104,8 +104,6 @@ def load_catalog(state_root, host):
 
 
 class LiveAdapter:
-    name = "live"
-
     def __init__(self, host, repo_root, vocabulary="auto", catalog=None, protect=()):
         self.host = host
         self.repo_root = repo_root
@@ -114,14 +112,8 @@ class LiveAdapter:
         self.protect = tuple(protect)
 
     # ---- trajectory reading ----
-    def load_trajectory(self, path):
-        return trace.load_trajectory(path)
-
     def tool_usage(self, path):
         return self.host.tool_usage(path)
-
-    def parse_catalog(self, run_dir_path, agent):
-        return self.parse_catalog_with_source(run_dir_path, agent)[0]
 
     def parse_catalog_with_source(self, run_dir_path, agent):
         transcript = os.path.realpath(os.path.join(run_dir_path, "transcript.jsonl"))
@@ -144,14 +136,6 @@ class LiveAdapter:
     def protected_tools(self):
         extra = COPILOT_PROTECTED if self.host.name == "copilot" else frozenset()
         return _Protected(PROTECTED_TOOLS | INTERACTIVE_PROTECTED | extra, self.protect)
-
-    # ---- loop guard ----
-    def spiral_snapshot(self, path):
-        return state_from_trajectory(path).snapshot()
-
-    # ---- per-task judge inputs ----
-    def problem_statements(self):
-        return {}
 
     def env_vocabulary(self):
         return detect_vocabulary(self.repo_root, self.vocabulary)
