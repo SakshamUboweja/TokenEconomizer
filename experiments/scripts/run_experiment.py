@@ -62,7 +62,6 @@ adapters + harness separately read the dataset roots (_WEBBENCH_PROJECTS / _CRED
 _REPOSVUL_ROOT). See README.md. The results root is git-ignored.
 """
 import argparse
-import collections
 import importlib
 import inspect
 import json

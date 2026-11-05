@@ -21,8 +21,7 @@ sys.path[:0] = [_EXPERIMENTS, os.path.dirname(_EXPERIMENTS)]  # te_harness; the 
 
 from te_bench import workloads  # noqa: E402
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_DIR = os.path.join(REPO, "workloads")
+OUT_DIR = os.path.join(_EXPERIMENTS, "workloads")
 
 _DOC = {
     "swebench": "SWE-bench task streams for the Claude/Copilot trimech A/B and the Codex arms.",
@@ -99,11 +98,11 @@ def main():
         if args.check:
             current = open(dest, encoding="utf-8").read() if os.path.exists(dest) else None
             if current != text:
-                stale.append(os.path.relpath(dest, REPO))
+                stale.append(os.path.relpath(dest, _EXPERIMENTS))
             continue
         with open(dest, "w", encoding="utf-8") as fh:
             fh.write(text)
-        print(f"wrote {os.path.relpath(dest, REPO)}  "
+        print(f"wrote {os.path.relpath(dest, _EXPERIMENTS)}  "
               f"({doc['total_tasks']} tasks, {len(doc['groups'])} groups)")
 
     if args.check:

@@ -218,7 +218,7 @@ def test_each_domain_plans_one_naive_and_one_full_stack():
 # ---- cell enumeration -------------------------------------------------------------------
 def test_cells_are_the_full_product_seed_major():
     arms, repos, seeds = ["a", "b"], ["r1", "r2", "r3"], [0, 1]
-    got = SP.cells("swebench", arms, repos, seeds)
+    got = SP.cells(arms, repos, seeds)
     assert len(got) == len(arms) * len(repos) * len(seeds)
     assert len(set(got)) == len(got), "no cell may be enumerated twice"
     # seed-major: seed 0 is complete before seed 1 begins, so an interrupted sweep leaves

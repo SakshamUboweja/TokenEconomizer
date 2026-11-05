@@ -35,7 +35,7 @@ sys.path[:0] = [_EXPERIMENTS, os.path.dirname(_EXPERIMENTS)]  # te_harness; the 
 from te_bench import workloads                                   # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from run_experiment import ARMS, SCAFFOLD_ARMS                          # noqa: E402
+from run_experiment import ARMS                                         # noqa: E402
 
 
 # ---- the main-experiment matrix ---------------------------------------------------------
@@ -101,9 +101,6 @@ SWEEP_ARMS_WEBBENCH_UNAVAILABLE = ("serena", "repomap", "trimech-repomap")
 # `trimech-rtk` is not "unavailable" on Web-Bench -- it is SUPERSEDED there by
 # `trimech-rtk-web`, exactly as `trimech` is by `trimech-web`. Listing it as unavailable
 # would claim the scaffold cannot run, which is false and would mislead the reader.
-SWEEP_ARMS_WEBBENCH_SUPERSEDED = {"trimech": "trimech-web",
-                                  "spiral-only": "spiral-only-web",
-                                  "trimech-rtk": "trimech-rtk-web"}
 SWEEP_SEEDS = (0, 1, 2)   # the paper's three seeds
 
 # Measured on the stored claude_swebench tree: 984 task-runs, mean $0.34/task on the honest
@@ -137,7 +134,7 @@ def group_sizes(domain, manifest=None):
     return {g: len(ids) for g, ids in workloads.runnable_instances(domain).items()}
 
 
-def cells(domain, arms, repos, seeds):
+def cells(arms, repos, seeds):
     """The (arm, repo, seed) triples of one lane, in run order: seed-major, then repo.
 
     Seed-major matches how the stored runs were launched -- a seed is one complete pass
@@ -227,6 +224,11 @@ def main():
     if bad:
         raise SystemExit(f"unknown arm(s): {' '.join(bad)}")
 
+    # Scaffold arms Web-Bench cannot run are left out of both the cells and the estimate.
+    unavailable = [a for a in arms
+                   if args.domain == "webbench" and a in SWEEP_ARMS_WEBBENCH_UNAVAILABLE]
+    usable = [a for a in arms if a not in unavailable]
+
     if args.format == "arms":
         for a in arms:
             print(a)
@@ -236,33 +238,23 @@ def main():
             print(f"{group}\t{n}")
         return
     if args.format == "cells":
-        unavailable = [a for a in arms
-                       if args.domain == "webbench" and a in SWEEP_ARMS_WEBBENCH_UNAVAILABLE]
         if unavailable:
             print(f"# SKIPPING scaffold arms not wired for webbench: "
                   f"{' '.join(unavailable)}", file=sys.stderr)
-        for arm, repo, seed in cells(args.domain,
-                                     [a for a in arms if a not in unavailable],
-                                     repos, seeds):
+        for arm, repo, seed in cells(usable, repos, seeds):
             print(f"{arm}\t{repo}\t{seed}")
         return
 
-    if args.format == "estimate":
-        usable = [a for a in arms
-                  if not (args.domain == "webbench"
-                          and a in SWEEP_ARMS_WEBBENCH_UNAVAILABLE)]
-        e = estimate(args.domain, usable, repos, seeds,
-                     args.sec_per_task, args.usd_per_task, limit=args.limit,
-                     manifest=args.workload)
-        if e["unknown_repos"]:
-            print(f"!! not in the {args.domain} workload record: "
-                  f"{' '.join(e['unknown_repos'])} (counted as 0 tasks)", file=sys.stderr)
-        print(_fmt_estimate(e, args.show_cost))
-        if args.show_cost:
-            print(f"  at {args.sec_per_task:.0f}s and ${args.usd_per_task:.2f} per task-run "
-                  f"(measured means, heavy-tailed -- an order of magnitude, not a quote)")
-        return
-
+    e = estimate(args.domain, usable, repos, seeds,
+                 args.sec_per_task, args.usd_per_task, limit=args.limit,
+                 manifest=args.workload)
+    if e["unknown_repos"]:
+        print(f"!! not in the {args.domain} workload record: "
+              f"{' '.join(e['unknown_repos'])} (counted as 0 tasks)", file=sys.stderr)
+    print(_fmt_estimate(e, args.show_cost))
+    if args.show_cost:
+        print(f"  at {args.sec_per_task:.0f}s and ${args.usd_per_task:.2f} per task-run "
+              f"(measured means, heavy-tailed -- an order of magnitude, not a quote)")
 
 if __name__ == "__main__":
     main()

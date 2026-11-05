@@ -180,11 +180,11 @@ def _cleanup_containers(*_a):
         _LIVE_CONTAINERS.discard(name)
 
 
-def _install_signal_cleanup():
-    """Remove live task containers on TERM/INT/HUP, then die of that same signal so the
-    exit status stays honest. No-op off the main thread."""
+def install_signal_cleanup(cleanup):
+    """Run `cleanup` (here: remove live task containers) on TERM/INT/HUP, then die of that
+    same signal so the exit status stays honest. No-op off the main thread."""
     def handler(signum, frame):
-        _cleanup_containers()
+        cleanup()
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
 
@@ -869,10 +869,6 @@ class ClaudeSwebenchRunner:
                  "-- row runs UNGUARDED at the DNS layer")
             return False
 
-    def _answer_key_attempts(self, run_dir_path):
-        """This task's answer-key-shaped command count. See `answer_key_attempts`."""
-        return answer_key_attempts(run_dir_path)
-
     @staticmethod
     def _net_guard_merge_program(entry):
         """Python, run INSIDE the container, that appends `entry` to the `PreToolUse` list
@@ -1202,15 +1198,7 @@ class ClaudeSwebenchRunner:
     # net guard, patch extraction, official grading -- is identical across all three agents.
     def _build_guard(self, run_kwargs):
         """The in-flight spiral guard for this task, or None when the arm has none."""
-        if not run_kwargs.get("spiral_guard"):
-            return None
-        return NudgeGuard(
-            envelope=run_kwargs.get("abort_envelope"),
-            judge=run_kwargs.get("spiral_judge"),
-            thr=run_kwargs.get("spiral_thr"),
-            nudge_budget=1 if run_kwargs.get("spiral_nudge") else 0,
-            nudge_writer=run_kwargs.get("spiral_nudge_writer"),
-            verbose=os.environ.get("TE_VERBOSE", "1") == "1")
+        return nudge_guard_for(run_kwargs)
 
     def _guard_continuation(self, guard, prompt):
         """The next segment's input after a guard stop, or falsey to stop."""
@@ -1376,8 +1364,8 @@ class ClaudeSwebenchRunner:
         row["net_guard_blocks"] = net_guard_blocks
         row["answer_key_hosts_blocked"] = hosts_blocked
         # Attempts, not refusals, and read back from the trace -- the agent-independent
-        # number. See _answer_key_attempts.
-        row["answer_key_attempts"] = self._answer_key_attempts(run_dir_path)
+        # number. See answer_key_attempts.
+        row["answer_key_attempts"] = answer_key_attempts(run_dir_path)
         if self.scaffold is not None:
             row["scaffold"] = self.scaffold.name
             row["patch_excludes"] = list(self._patch_excludes())
@@ -1905,6 +1893,129 @@ def _row_from_result(result):
     }
 
 
+def degraded_row(result, complete_source):
+    """Row fields from a segment of an agent that reports usage in flat token fields
+    (Copilot, Codex), with the same degradation markers the Claude path sets, so one filter
+    covers every agent. `complete_source` is the `tokens_source` of a fully accounted run;
+    any other source means the usage is incomplete, and its token fields are None (never 0),
+    so such a task is filterable instead of being averaged in as free."""
+    row = dict(result or {})
+    row.setdefault("is_error", False)
+    # Neither agent exposes a per-run USD figure, so the vendor cost stays null rather than
+    # a fabricated zero.
+    row.setdefault("cost_usd_vendor", None)
+    src = row.get("tokens_source")
+    row["usage_incomplete"] = src is not None and src != complete_source
+    row["output_tokens_missing"] = row.get("output_tokens") is None
+    row["num_turns_recovered"] = False
+    if row["usage_incomplete"]:
+        row.setdefault("usage_incomplete_reason", f"tokens_source={src}")
+    return row
+
+
+def nudge_guard_for(run_kwargs):
+    """The generic in-flight spiral guard for one rollout, or None when the arm has none."""
+    if not run_kwargs.get("spiral_guard"):
+        return None
+    return NudgeGuard(
+        envelope=run_kwargs.get("abort_envelope"),
+        judge=run_kwargs.get("spiral_judge"),
+        thr=run_kwargs.get("spiral_thr"),
+        nudge_budget=1 if run_kwargs.get("spiral_nudge") else 0,
+        nudge_writer=run_kwargs.get("spiral_nudge_writer"),
+        verbose=os.environ.get("TE_VERBOSE", "1") == "1")
+
+
+def codex_guard_for(run_kwargs):
+    """The Codex-native resume controller for one rollout, or None when the arm has none."""
+    policy = run_kwargs.get("codex_spiral_policy")
+    if policy is None:
+        return None
+    return codex_spiral.CodexResumeGuard(
+        policy=policy, verbose=os.environ.get("TE_VERBOSE", "1") == "1")
+
+
+def copilot_model_and_effort(model, agent):
+    """(model, effort_requested, effort) for a Copilot runner of either domain.
+
+    'auto' normalises to None: it is a routing directive, not a billable model id, and
+    recording it as one makes pricing hard-fail at the END of a paid rollout. Native Copilot
+    picks its own model unless told otherwise; ANTHROPIC_MODEL is meaningless here, so
+    COPILOT_MODEL is the knob and 'auto' (the CLI's own router) is the default.
+    """
+    model = copilot.normalize_model(model or os.environ.get("COPILOT_MODEL"))
+    copilot.validate_priceable(model, agent)
+    # Same rule as the Claude path: the optimizer is the agent's own model, so the caller
+    # records `model or "auto"` -- never the "agent" label optimizer_call substitutes.
+    if os.environ.get("TE_OPTIMIZER_MODEL"):
+        raise RuntimeError(
+            "TE_OPTIMIZER_MODEL is no longer honoured: the between-task optimizer "
+            "runs on the agent's own model so mechanism overhead is priced on the "
+            "same basis as the task rows. Unset it.")
+    effort_requested = (os.environ.get("TE_EFFORT_LEVEL")
+                        or os.environ.get("COPILOT_EFFORT_LEVEL") or "high")
+    if effort_requested not in copilot.EFFORT_LEVELS:
+        raise RuntimeError(f"TE_EFFORT_LEVEL={effort_requested!r} is not one of "
+                           f"{sorted(copilot.EFFORT_LEVELS)}")
+    # The router model rejects --effort and exits, so effort is only APPLIED when a model is
+    # pinned. Recorded as null otherwise, because on `auto` the effort is whatever the
+    # router chose -- not a controlled part of the cost basis.
+    effort = effort_requested if copilot.effort_applies(model) else None
+    if effort is None:
+        why = ("the launcher probed this model and the CLI rejected --effort"
+               if os.environ.get("TE_EFFORT_APPLIES") == "0"
+               else "the 'auto' router takes no effort level; pin COPILOT_MODEL "
+                    "to a served model id to control it")
+        _log(f"copilot: TE_EFFORT_LEVEL={effort_requested} NOT applied "
+             f"(model={model or 'auto'}, recorded as null) -- {why}.")
+    return model, effort_requested, effort
+
+
+def copilot_optimizer_call(runner, prompt, model="agent"):
+    """One between-task mechanism call for a Copilot runner of either domain.
+
+    Over the Messages API when the lane's BYOK provider speaks it and so bills what its
+    TASKS bill (`runner.optimizer_endpoint`, resolved at construction), else through the
+    host `copilot` binary with every tool denied and excluded and custom instructions off,
+    so either way it is a pure text completion that cannot read the testbed.
+    """
+    if runner.optimizer_endpoint:
+        base, key, bearer = runner.optimizer_endpoint
+        return anthropic_optimizer_call(
+            prompt, model=model, configured_model=runner.optimizer_model,
+            max_tokens=runner.optimizer_max_tokens,
+            api_key=key, bearer=bearer, base_url=base)
+    return copilot.optimizer_call(
+        prompt, binary=runner.copilot,
+        model=(model if model not in ("agent", "copilot") else runner.model))
+
+
+def merge_copilot_segments(a, b):
+    """Two Copilot segments' usage combined, with their debug logs concatenated."""
+    merged = copilot.merge_usage(a, b)
+    merged["_debug_log"] = (a or {}).get("_debug_log", "") + (b or {}).get("_debug_log", "")
+    return merged
+
+
+def save_copilot_debug_log(row, out_dir):
+    """Pop the debug log a Copilot row carries and write it to `copilot_debug.log`.
+
+    trace.parse_catalog(run_dir, 'copilot') reads exactly this filename, on both domains.
+    Without it the untooling judge is handed tool names with EMPTY descriptions, drops
+    nothing, and still bills for the call -- the mechanism silently measures itself as
+    useless. Returns the log text, empty when none was recovered.
+    """
+    log_text = row.pop("_debug_log", "")
+    if log_text:
+        try:
+            with open(os.path.join(out_dir, "copilot_debug.log"), "w",
+                      encoding="utf-8") as fh:
+                fh.write(log_text)
+        except OSError as e:
+            _log(f"could not save copilot_debug.log: {e}")
+    return log_text
+
+
 class CopilotSwebenchRunner(ClaudeSwebenchRunner):
     """AgentRunner: the GitHub Copilot CLI in the official image, graded by the official
     harness.
@@ -1942,41 +2053,14 @@ class CopilotSwebenchRunner(ClaudeSwebenchRunner):
 
     def __init__(self, agent="copilot", model=None, grading_path=None, scaffold=None):
         self.agent = agent
-        # Native Copilot bills through the GitHub subscription and picks its own model
-        # unless told otherwise; ANTHROPIC_MODEL is meaningless here, so COPILOT_MODEL is
-        # the knob and 'auto' (the CLI's own router) is the default.
-        # 'auto' normalises to None: it is a routing directive, not a billable model id,
-        # and recording it as one makes pricing hard-fail at the END of a paid rollout.
-        self.model = copilot.normalize_model(model or os.environ.get("COPILOT_MODEL"))
-        copilot.validate_priceable(self.model, self.agent)
-        # Same rule as the Claude path: the optimizer is the agent's own model, and it is
-        # RECORDED as such -- optimizer_call substitutes self.model for the "agent" label,
-        # so recording "agent" would describe a cost basis the run did not use. A pinned id
-        # records as itself; an unpinned model is the CLI's own router, which is what the
-        # task ran on too, and records as "auto".
-        if os.environ.get("TE_OPTIMIZER_MODEL"):
-            raise RuntimeError(
-                "TE_OPTIMIZER_MODEL is no longer honoured: the between-task optimizer "
-                "runs on the agent's own model so mechanism overhead is priced on the "
-                "same basis as the task rows. Unset it.")
+        # Native Copilot bills through the GitHub subscription (or its own BYOK provider).
+        self.model, self.effort_requested, self.effort = copilot_model_and_effort(
+            model, self.agent)
+        # optimizer_call substitutes self.model for the "agent" label, so recording "agent"
+        # would describe a cost basis the run did not use. A pinned id records as itself;
+        # an unpinned model is the CLI's own router, which is what the task ran on too, and
+        # records as "auto".
         self.optimizer_model = self.model or "auto"
-        self.effort_requested = (os.environ.get("TE_EFFORT_LEVEL")
-                                 or os.environ.get("COPILOT_EFFORT_LEVEL") or "high")
-        if self.effort_requested not in copilot.EFFORT_LEVELS:
-            raise RuntimeError(f"TE_EFFORT_LEVEL={self.effort_requested!r} is not one of "
-                               f"{sorted(copilot.EFFORT_LEVELS)}")
-        # The router model rejects --effort and exits, so effort is only APPLIED when a
-        # model is pinned. Recorded as null otherwise, because on `auto` the effort is
-        # whatever the router chose -- not a controlled part of the cost basis.
-        self.effort = (self.effort_requested
-                       if copilot.effort_applies(self.model) else None)
-        if self.effort is None:
-            why = ("the launcher probed this model and the CLI rejected --effort"
-                   if os.environ.get("TE_EFFORT_APPLIES") == "0"
-                   else "the 'auto' router takes no effort level; pin COPILOT_MODEL "
-                        "to a served model id to control it")
-            _log(f"copilot: TE_EFFORT_LEVEL={self.effort_requested} NOT applied "
-                 f"(model={self.model or 'auto'}, recorded as null) -- {why}.")
         # An external tool scaffold (rtk / serena / repomap) -- a BASELINE, not a
         # mechanism. Same contract as the Claude path: resolved and preflighted here so a
         # misconfigured one kills the lane before task 0 rather than writing rows that
@@ -2030,27 +2114,14 @@ class CopilotSwebenchRunner(ClaudeSwebenchRunner):
 
     # ---- 1. the paid optimizer call ---------------------------------------------------
     def optimizer_call(self, prompt, model="agent"):
-        """One between-task proposer / judge / nudge-writer call.
+        """One between-task proposer / judge / nudge-writer call (copilot_optimizer_call).
 
-        Over the Messages API when this lane's BYOK provider speaks it and so bills what
-        its TASKS bill (`self.optimizer_endpoint`, resolved at construction), else through
-        the host `copilot` binary with every tool denied and excluded and custom
-        instructions off, so either way it is a pure text completion that cannot read the
-        testbed.
-
-        Both are priced on the same weight table the task rows use, and `optimizer_model`
-        is the agent's own model on both -- only the wire differs. `run_config.json` records
-        which one ran, because the two are NOT comparable on overhead.
+        Both transports are priced on the same weight table the task rows use, and
+        `optimizer_model` is the agent's own model on both -- only the wire differs.
+        `run_config.json` records which one ran, because the two are NOT comparable on
+        overhead.
         """
-        if self.optimizer_endpoint:
-            base, key, bearer = self.optimizer_endpoint
-            return anthropic_optimizer_call(
-                prompt, model=model, configured_model=self.optimizer_model,
-                max_tokens=self.optimizer_max_tokens,
-                api_key=key, bearer=bearer, base_url=base)
-        return copilot.optimizer_call(
-            prompt, binary=self.copilot,
-            model=(model if model not in ("agent", "copilot") else self.model))
+        return copilot_optimizer_call(self, prompt, model)
 
     # ---- 2. container plumbing --------------------------------------------------------
     def _start(self, name, instance_id):
@@ -2222,47 +2293,22 @@ class CopilotSwebenchRunner(ClaudeSwebenchRunner):
 
     # ---- 3b. accounting hooks ----------------------------------------------------------
     def _merge_segments(self, a, b):
-        merged = copilot.merge_usage(a, b)
-        merged["_debug_log"] = (a or {}).get("_debug_log", "") + (b or {}).get("_debug_log", "")
-        return merged
+        return merge_copilot_segments(a, b)
 
     def _row_from_segment(self, result):
-        row = dict(result or {})
-        row.setdefault("is_error", False)
-        # Copilot exposes no per-run USD figure (only a premium-request count), so the
-        # vendor cost stays null rather than a fabricated zero.
-        row.setdefault("cost_usd_vendor", None)
-        # Same degradation predicate as the Claude path, so one filter covers both agents.
-        # Copilot needs no _UsageRecovery -- it reads the whole log dir back AFTER the
-        # kill (`cat {logdir}/*.log`), so a guard or timeout stop costs it no usage. Its
-        # own failure mode is a log dir it could not parse, which
-        # `row_usage` already reports as tokens_source="stream_output_only" with None (not
-        # 0) in the unaccounted fields.
-        src = row.get("tokens_source")
-        row["usage_incomplete"] = src is not None and src != "debug_log"
-        row["output_tokens_missing"] = row.get("output_tokens") is None
-        row["num_turns_recovered"] = False        # turn_start events survive the kill
-        if row["usage_incomplete"]:
-            row.setdefault("usage_incomplete_reason", f"tokens_source={src}")
-        return row      # _debug_log rides along; run_task persists and strips it
+        # Copilot needs no _UsageRecovery -- it reads the whole log dir back AFTER the kill
+        # (`cat {logdir}/*.log`), so a guard or timeout stop costs it no usage, and its
+        # turn_start events survive the kill. Its own failure mode is a log dir it could not
+        # parse, which `row_usage` reports as tokens_source="stream_output_only".
+        # _debug_log rides along; run_task persists and strips it.
+        return degraded_row(result, "debug_log")
 
     # ---- 4. entry point: same lifecycle + the debug log the catalog parser needs --------
     def run_task(self, task, *, arm, injected, exclude_tools, run_dir_path, **run_kwargs):
         row, out_dir = super().run_task(
             task, arm=arm, injected=injected, exclude_tools=exclude_tools,
             run_dir_path=run_dir_path, **run_kwargs)
-        # trace.parse_catalog(run_dir, 'copilot') reads exactly this filename. Without it
-        # the untooling judge is handed tool names with EMPTY descriptions, drops nothing,
-        # and still bills for the call -- the mechanism silently measures itself as useless.
-        log_text = row.pop("_debug_log", "")
-        if log_text:
-            try:
-                with open(os.path.join(out_dir, "copilot_debug.log"), "w",
-                          encoding="utf-8") as fh:
-                    fh.write(log_text)
-            except OSError as e:
-                _log(f"could not save copilot_debug.log: {e}")
-        else:
+        if not save_copilot_debug_log(row, out_dir):
             _log("no copilot debug log recovered -- untooling catalog will be empty "
                  "and token accounting falls back to stream output only")
         return row, out_dir
@@ -2417,9 +2463,8 @@ class CodexSwebenchRunner(ClaudeSwebenchRunner):
         self.eval_timeout = int(os.environ.get("TE_EVAL_TIMEOUT", "1800"))
         self.keep = os.environ.get("TE_KEEP_CONTAINERS") == "1"
         # Per-task state the segment builder needs but run_task does not thread: the
-        # frozen capability mask, and the resume thread id.
+        # frozen capability mask.
         self._capabilities = ()
-        self._thread_id = ""
         codex.preflight_optimizer(routing=self.routing, configured_model=self.model)
 
     # ---- 1. the paid optimizer call ---------------------------------------------------
@@ -2633,11 +2678,7 @@ class CodexSwebenchRunner(ClaudeSwebenchRunner):
         no threshold yet passes None and runs unguarded, which is the cold-start behaviour
         the mechanism intends.
         """
-        policy = run_kwargs.get("codex_spiral_policy")
-        if policy is None:
-            return None
-        return codex_spiral.CodexResumeGuard(
-            policy=policy, verbose=os.environ.get("TE_VERBOSE", "1") == "1")
+        return codex_guard_for(run_kwargs)
 
     def _guard_continuation(self, guard, prompt):
         """The Codex guard resumes a thread, so it takes no prompt and returns a request."""
@@ -2671,21 +2712,9 @@ class CodexSwebenchRunner(ClaudeSwebenchRunner):
         return codex.merge_usage(a, b)
 
     def _row_from_segment(self, result):
-        row = dict(result or {})
-        row.setdefault("is_error", False)
-        row.setdefault("cost_usd_vendor", None)
-        # Same degradation predicate as the other two agents, so one filter covers all
-        # three. Codex's own failure mode is a stream killed before `turn.completed`, which
-        # takes the usage block with it -- row_usage reports that as tokens_source
-        # no_turn_event with None (not 0) in every token field, so such a task is
-        # filterable instead of being averaged in as free.
-        src = row.get("tokens_source")
-        row["usage_incomplete"] = src is not None and src != "stream_usage"
-        row["output_tokens_missing"] = row.get("output_tokens") is None
-        row["num_turns_recovered"] = False
-        if row["usage_incomplete"]:
-            row.setdefault("usage_incomplete_reason", f"tokens_source={src}")
-        return row
+        # Codex's own failure mode is a stream killed before `turn.completed`, which takes
+        # the usage block with it -- row_usage reports that as tokens_source no_turn_event.
+        return degraded_row(result, "stream_usage")
 
     # ---- 4. entry point ---------------------------------------------------------------
     def run_task(self, task, *, arm, injected, exclude_tools, run_dir_path, **run_kwargs):
@@ -2750,6 +2779,6 @@ def make_runner(agent=None, scaffold=None, **kwargs):
         raise RuntimeError(
             f"no SWE-bench runner for --agent {agent!r}; "
             f"available: {', '.join(sorted(RUNNERS))}")
-    _install_signal_cleanup()
+    install_signal_cleanup(_cleanup_containers)
     scaffold = scaffold or os.environ.get("TE_SCAFFOLD") or None
     return RUNNERS[agent](agent=agent, scaffold=scaffold, **kwargs)

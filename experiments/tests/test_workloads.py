@@ -222,11 +222,12 @@ def test_driver_task_list_is_not_stale():
 # the evaluator's ~300s undici abort loses whole attempts and truncates the stream.
 
 def test_webbench_task_timeout_is_clamped_under_the_evaluator_abort():
-    from te_harness.webbench import (webbench_task_timeout, WEBBENCH_TASK_TIMEOUT_MAX,
-                                     WEBBENCH_UNDICI_ABORT_S)
-    assert WEBBENCH_TASK_TIMEOUT_MAX < WEBBENCH_UNDICI_ABORT_S
+    from te_harness.webbench import (webbench_task_timeout, WEBBENCH_UNDICI_ABORT_DEFAULT_S,
+                                     WEBBENCH_TASK_TIMEOUT_HEADROOM_S)
+    cap = WEBBENCH_UNDICI_ABORT_DEFAULT_S - WEBBENCH_TASK_TIMEOUT_HEADROOM_S
+    assert cap < WEBBENCH_UNDICI_ABORT_DEFAULT_S
     for shared in ("3600", "1800", "301"):
-        assert webbench_task_timeout({"TE_TASK_TIMEOUT": shared}) == WEBBENCH_TASK_TIMEOUT_MAX
+        assert webbench_task_timeout({"TE_TASK_TIMEOUT": shared}) == cap
 
 
 def test_webbench_task_timeout_defaults_and_overrides():
@@ -242,7 +243,7 @@ def test_webbench_task_timeout_defaults_and_overrides():
 def test_swebench_task_timeout_is_untouched_by_the_webbench_clamp():
     """SWE-bench genuinely needs 3600 (sympy tasks run to 1800 s); the clamp is domain-local."""
     import te_harness.swebench as sb
-    assert "WEBBENCH_TASK_TIMEOUT_MAX" not in dir(sb)
+    assert "WEBBENCH_TASK_TIMEOUT_HEADROOM_S" not in dir(sb)
 
 
 # ---- the abort ceiling is raisable, because the evaluator's bare `fetch` uses undici's

@@ -206,12 +206,11 @@ def test_both_guards_expose_everything_the_shared_task_loop_reads():
 
     The loop logs `guard.segment` on every nudge (`_log(... guard.segment)`), so the guard
     must expose it, and every other attribute the loop reads. Rather than pin one name,
-    read the attributes the loop actually touches out of its source and require both guard
-    classes to carry them.
+    read the attributes the loop actually touches out of its source and require the Codex
+    guard to carry every one of them.
     """
     import inspect, re
     from te_harness import swebench as sw
-    from te_bench import nudge_guard as generic
 
     src = inspect.getsource(sw.ClaudeSwebenchRunner.run_task)
     names = set(re.findall(r"(?<![\w.])guard\.([a-z_][a-z0-9_]*)", src))
