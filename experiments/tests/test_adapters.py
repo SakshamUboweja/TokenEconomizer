@@ -25,7 +25,6 @@ def test_all_adapters_importable_and_named():
 def test_swebench_reading_methods_delegate():
     a = SwebenchAdapter()
     assert a.protected_tools() is not None
-    assert a.inapplicable_tools() is not None
     # codex default catalog is available without a transcript
     assert "shell" in a.parse_catalog("/nonexistent", "codex")
 

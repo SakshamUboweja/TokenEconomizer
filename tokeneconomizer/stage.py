@@ -3,7 +3,6 @@
 Each mechanism implements only the hooks it needs; the rest keep the no-op default. A caller
 -- the plugin's `fold`, or a benchmark harness -- runs them in this order:
 
-    before_task(task, injected)  -> str        # before: may extend the injected prefix
     build_tools(task)            -> list|None  # at launch: the tools to exclude
     run_kwargs(task)             -> dict       # at launch: settings for the agent runner
     after_task(task, row, run_dir_path, srow)  # after: update state, record telemetry
@@ -15,9 +14,6 @@ Each mechanism implements only the hooks it needs; the rest keep the no-op defau
 
 class Stage:
     name = "base"
-
-    def before_task(self, task, injected):
-        return injected
 
     def build_tools(self, task):
         return None

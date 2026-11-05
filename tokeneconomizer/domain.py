@@ -9,8 +9,6 @@ in a person's session); the benchmark adapters live in `experiments/te_bench/ada
   tool_usage           -> the tools a session used (tool pruning's evidence)
   parse_catalog        -> the tools a session loaded (what pruning may propose)
   protected_tools      -> the work surface pruning never touches
-  inapplicable_tools   -> tools no task in this domain can use, by construction
-  hardcoded_exclusions -> that set, less the tools seen in use so far
   spiral_snapshot      -> a finished trajectory's loop signals, for the guard's envelope
   problem_statements   -> {task_id: task text} for the optional per-task tool judge
   env_vocabulary       -> (optional) the `microskills.Vocabulary` naming this domain's
@@ -50,14 +48,6 @@ class DomainAdapter(Protocol):
     # ---- tool pruning ----
     def protected_tools(self):
         """-> frozenset of tools that must never be dropped (the work surface)."""
-        ...
-
-    def inapplicable_tools(self):
-        """-> tuple of tools inapplicable by construction for a single task."""
-        ...
-
-    def hardcoded_exclusions(self, used_tools):
-        """-> the tools to drop without evidence, given those seen in use so far."""
         ...
 
     # ---- loop guard ----
