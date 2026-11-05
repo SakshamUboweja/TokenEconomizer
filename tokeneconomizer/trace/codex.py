@@ -16,7 +16,7 @@ import os
 import re
 import shlex
 
-from .jsonl import lines as _lines
+from .jsonl import parse as _parse
 from .jsonl import records as _records
 
 _SHELL_PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$", re.M)
@@ -41,11 +41,7 @@ def codex_exec_calls(lines):
     Commands become `shell` calls with a `command` argument; file-change items become
     `apply_patch` calls carrying the changed paths. Agent messages are not tool calls."""
     out = []
-    for line in lines:
-        try:
-            ev = json.loads(line)
-        except Exception:
-            continue
+    for ev in _parse(lines):
         if ev.get("type") != "item.completed":
             continue
         item = ev.get("item") or {}
@@ -143,11 +139,7 @@ def codex_rollout_to_exec(rollout_path, out_path):
     n = 0
     thread = None
     with open(out_path, "w", encoding="utf-8") as out:
-        for line in _lines(rollout_path):
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue
+        for ev in _records(rollout_path):
             payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
             if ev.get("type") == "session_meta" and thread is None:
                 thread = payload.get("id") or payload.get("session_id")
@@ -177,13 +169,7 @@ def codex_capability_trace(rollout_path, out_path):
     if n is None:
         return None
     with open(out_path, "a", encoding="utf-8") as out:
-        for line in _lines(rollout_path):
-            if '"response_item"' not in line:
-                continue
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue
+        for ev in _records(rollout_path, '"response_item"'):
             p = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
             if ev.get("type") != "response_item" or p.get("type") not in (
                     "custom_tool_call", "function_call"):
@@ -219,13 +205,7 @@ def _turn_starts(rollout_path):
 def codex_session_meta(rollout_path):
     """{cwd, model, cli_version} from a rollout's session_meta / turn_context records."""
     meta = {}
-    for line in _lines(rollout_path):
-        if '"session_meta"' not in line and '"turn_context"' not in line:
-            continue
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
+    for ev in _records(rollout_path, '"session_meta"', '"turn_context"'):
         p = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
         if ev.get("type") == "session_meta":
             meta.setdefault("cwd", p.get("cwd"))
@@ -242,13 +222,7 @@ def codex_session_usage(rollout_path):
     input total less both cache fields, and reasoning tokens are added to output."""
     total = None
     requests = 0
-    for line in _lines(rollout_path):
-        if '"token_count"' not in line:
-            continue
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
+    for ev in _records(rollout_path, '"token_count"'):
         p = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
         if p.get("type") != "token_count":
             continue

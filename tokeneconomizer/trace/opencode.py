@@ -23,6 +23,8 @@ tokens}` for an answer, whose `content` holds `text` parts and `{type: "tool", i
 import json
 import os
 
+from .jsonl import parse
+
 
 def _content_text(content):
     if isinstance(content, list):
@@ -195,13 +197,7 @@ def opencode_run_reply(stdout):
     usage of every finished step in ledger fields (with opencode's own cost as `cost_usd`), and
     the session it created. `usage` is None when no step finished."""
     text, usage, sid = [], None, ""
-    for line in (stdout or "").splitlines():
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(ev, dict):
-            continue
+    for ev in parse((stdout or "").splitlines()):
         sid = sid or str(ev.get("sessionID") or "")
         part = ev.get("part") if isinstance(ev.get("part"), dict) else {}
         if ev.get("type") == "text" and part.get("text"):
