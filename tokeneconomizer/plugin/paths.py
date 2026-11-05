@@ -37,11 +37,20 @@ def write_atomic(path, text, mode=None):
     half a file. `mode`, when given, is set before the file appears."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    if mode is not None:
-        os.chmod(tmp, mode)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        # A failed write must not leave its temporary file behind; on success the rename
+        # already consumed it, so only this path pays for the unlink.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def record_error(root, label=""):
@@ -240,16 +249,6 @@ class RepoId:
     how: str = ""    # BY_REMOTE, BY_PATH (a checkout with no remote) or BY_DIR (no checkout)
 
 
-def _main_checkout(root):
-    """The directory holding a checkout's shared `.git`: the checkout itself, or for a linked
-    worktree the clone it was made from. None when that git directory is not a `.git` (a bare
-    repository's worktree, `--separate-git-dir`)."""
-    common = _git_common_dir(root)
-    if common and os.path.basename(os.path.normpath(common)) == ".git":
-        return os.path.dirname(os.path.normpath(common))
-    return None
-
-
 def repo_identity(cwd, env=None):
     """Identify the repository a session in `cwd` belongs to.
 
@@ -265,7 +264,15 @@ def repo_identity(cwd, env=None):
         how, canon, name = BY_REMOTE, remote, remote.rstrip("/").rsplit("/", 1)[-1]
         label = "/".join(remote.split("/")[-2:])
     else:
-        main = (_main_checkout(root) or _git_common_dir(root) or root) if found else root
+        main = root
+        if found:
+            # The directory holding the shared `.git`: the checkout itself, or for a linked
+            # worktree the clone it was made from. A git directory not named `.git` (a bare
+            # repository's worktree, `--separate-git-dir`) stands for itself.
+            common = _git_common_dir(root)
+            if common:
+                norm = os.path.normpath(common)
+                main = os.path.dirname(norm) if os.path.basename(norm) == ".git" else common
         how, canon = (BY_PATH if found else BY_DIR), os.path.realpath(main)
         name = label = os.path.basename(main.rstrip("/"))
     return RepoId(root=root, key=f"{_slug(name)}-{digest(canon)}", label=label or "repo",

@@ -23,23 +23,23 @@ from .denylist import CODEX_TOGGLES, codex_features_list, write_json as _write_j
 from .sidecall import claude_cli, claude_flags, copilot_model, program, sidecall_env
 
 
-def verify_copilot(repo_root, servers, cli="copilot"):
+def verify_copilot(repo_root, servers):
     """{server: tools still in the request} for a session started in `repo_root`, by the local
     capture (no model call); None if no request could be captured."""
-    body = copilot_capture(cwd=repo_root, cli=cli)
+    body = copilot_capture(cwd=repo_root)
     if not body:
         return None
     names = _request_tools(body)
     return {s: sum(1 for n in names if n and n.startswith(s + "-")) for s in servers}
 
 
-def verify_codex(repo_root, capabilities, cli="codex", timeout=30):
+def verify_codex(repo_root, capabilities):
     """What `codex features list`, run in the repository, says about the applied toggles:
     {feature: enabled} for the features those capabilities switch off, or None when the CLI
     is unavailable. Free: it reads configuration and calls no model."""
     feats = [k for c in capabilities for t, k, v in CODEX_TOGGLES.get(c, ())
              if t == "features"]
-    out = codex_features_list(repo_root, cli, timeout) if feats else None
+    out = codex_features_list(repo_root) if feats else None
     if out is None:
         return None
     state = {}

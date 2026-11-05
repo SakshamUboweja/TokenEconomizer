@@ -164,8 +164,8 @@ def refresh(ctx):
     state = {"commit": commit, "python": python, "map": text, "chars": len(text),
              "tokens_budget": ctx.config.repomap_tokens, "secs": round(time.time() - t0, 1),
              "error": err or None, "updated": time.time()}
-    if not text and read_state(ctx).get("map"):
-        prior = read_state(ctx)
+    prior = read_state(ctx) if not text else {}
+    if prior.get("map"):
         state.update(map=prior["map"], chars=len(prior["map"]), commit=prior.get("commit"))
     _write_state(ctx, state)
     return state

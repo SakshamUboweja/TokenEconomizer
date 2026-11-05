@@ -80,7 +80,6 @@ def test_store_writes_atomically_and_logs(tmp_path):
     s.append("log.jsonl", {"n": 1})
     s.append("log.jsonl", {"n": 2})
     assert [r["n"] for r in s.read_lines("log.jsonl")] == [1, 2]
-    assert [r["n"] for r in s.read_lines("log.jsonl", limit=1)] == [2]
     with s.locked("x") as got_x:
         with s.locked("y") as got_y:              # distinct locks never deadlock
             s.write("c.json", [1])

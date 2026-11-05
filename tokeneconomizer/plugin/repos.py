@@ -98,10 +98,10 @@ def pin(root, host, session_id, repo, cwd):
         {k: getattr(repo, k) for k in _FIELDS}, cwd=cwd, at=time.time()))
 
 
-def prune_pins(root, host, now=None, max_age_s=PIN_MAX_AGE_S):
-    """Remove pins older than `max_age_s`; at most once a day, so a hook pays nothing."""
+def prune_pins(root, host):
+    """Remove pins older than `PIN_MAX_AGE_S`; at most once a day, so a hook pays nothing."""
     st = _pin_store(root, host)
-    now = now or time.time()
+    now = time.time()
     marker = st.path(".pruned")
     try:
         if now - os.path.getmtime(marker) < 86400:
@@ -112,7 +112,7 @@ def prune_pins(root, host, now=None, max_age_s=PIN_MAX_AGE_S):
     try:
         for name in os.listdir(st.base):
             p = st.path(name)
-            if name.endswith(".json") and now - os.path.getmtime(p) > max_age_s:
+            if name.endswith(".json") and now - os.path.getmtime(p) > PIN_MAX_AGE_S:
                 os.remove(p)
                 n += 1
         open(marker, "w", encoding="utf-8").close()
@@ -357,19 +357,20 @@ def _merge_host(src, dst, sids, whole, label="", timeout=LOCK_WAIT_S):
             _take_learned(src, dst, label)
         else:
             unlearned = (set(sids) & set(s_folded)) - set(d_folded)
+        incoming = set(sids)
         refold = set()
         for sid in unlearned:
+            mine = sid in incoming
+            entry = (s_folded if mine else d_folded).get(sid)
             # A session imported from the agent's history stays as it was folded: folded again
             # it would land after the live sessions, out of time order.
-            if _imported((s_folded if sid in sids else d_folded).get(sid)):
+            if _imported(entry):
                 continue
-            rec = s_sess.get(sid) if sid in sids else d_sess.get(sid)
-            entry = (s_folded if sid in sids else d_folded).get(sid)
+            rec = (s_sess if mine else d_sess).get(sid)
             tp = _transcript_of(rec or {}, entry)
             if tp and os.path.exists(tp):
                 refold.add(sid)
 
-        incoming = set(sids)
         s_ledger, d_ledger = src.read_lines("ledger.jsonl"), dst.read_lines("ledger.jsonl")
         # One session record per session: 0.1.0 could fold a session it had split over two keys
         # under both, and its cost counts once -- the later fold's, which read the longer log.
@@ -441,11 +442,11 @@ def merge_whole(root, src_key, dst_key, label="", timeout=LOCK_WAIT_S):
         if r is None:
             return None
         out[h] = r
-    for name in ("config.json",):           # a repository's own settings, if it had none
-        if os.path.exists(os.path.join(src_dir, name)) and \
-                not os.path.exists(os.path.join(dst_dir, name)):
-            os.makedirs(dst_dir, exist_ok=True)
-            shutil.copyfile(os.path.join(src_dir, name), os.path.join(dst_dir, name))
+    # A repository's own settings, if it had none.
+    src_cfg, dst_cfg = os.path.join(src_dir, "config.json"), os.path.join(dst_dir, "config.json")
+    if os.path.exists(src_cfg) and not os.path.exists(dst_cfg):
+        os.makedirs(dst_dir, exist_ok=True)
+        shutil.copyfile(src_cfg, dst_cfg)
     aside = os.path.join(root, "merged", f"{src_key}.{time.strftime('%Y%m%d-%H%M%S')}")
     os.makedirs(os.path.dirname(aside), exist_ok=True)
     os.replace(src_dir, aside)

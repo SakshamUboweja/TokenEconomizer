@@ -25,10 +25,6 @@ class LiveContext:
         """Where the mechanism classes keep their own state (their `results_root`)."""
         return self.store.ensure("mechanisms")
 
-    @property
-    def headless(self):
-        return self.is_headless()
-
     def is_headless(self, transcript=None):
         """Whether nobody is at the agent's own UI: `mode` when set, else what the agent shows
         (its environment, its session log at `transcript`, its process)."""
