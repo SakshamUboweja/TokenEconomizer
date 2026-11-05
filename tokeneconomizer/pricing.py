@@ -105,10 +105,6 @@ WEIGHTS_CLAUDE = {
     "output": 5.0,        # output_tokens (completion)
 }
 
-_BREAKDOWN_KEYS = ("input_tokens", "cache_read_input_tokens",
-                   "cache_creation_input_tokens", "output_tokens")
-
-
 def resolve_model(rec):
     """The billed model id for a row: its explicit `model`, else the agent's default
     billed model (AGENT_DEFAULT_MODEL), else None. run_agent stamps the resolved id into
