@@ -332,8 +332,7 @@ def test_claude_schema_yields_the_same_fact(tmp_path):
 
 def test_prefix_stage_envfacts_profile_needs_no_runner_and_reports_zero(tmp_path):
     cfg = InjectionConfig(enabled=True, profile="envfacts")
-    stage = PrefixStage(cfg, "acme/widget", str(tmp_path), fresh=True, runner=None,
-                        agent="codex")
+    stage = PrefixStage(cfg, "acme/widget", str(tmp_path), fresh=True, runner=None)
     assert stage.render() == ""
     rd = str(tmp_path / "run"); os.makedirs(rd)
     write_codex_transcript(os.path.join(rd, "transcript.jsonl"), [

@@ -13,7 +13,7 @@ implements only the ones its stages call: `tool_usage`, `parse_catalog_with_sour
   protected_tools      -> the work surface pruning never touches
   spiral_snapshot      -> a finished trajectory's loop signals, for the guard's envelope
   problem_statements   -> {task_id: task text} for the optional per-task tool judge
-  env_vocabulary       -> (optional) the `microskills.Vocabulary` naming this domain's
+  env_vocabulary       -> (optional) the `microskills.observe.Vocabulary` naming this domain's
                           interpreters, runners, package tools, fetchers and probes
 
 Running a task and grading it is not on this protocol: that is the caller's job (the plugin's
@@ -64,6 +64,6 @@ class DomainAdapter(Protocol):
 
     # ---- micro-skill vocabulary (optional) ----
     def env_vocabulary(self):
-        """-> a `microskills.Vocabulary` for this domain (default: Python/git)."""
+        """-> a `microskills.observe.Vocabulary` for this domain (default: Python/git)."""
         from .microskills import PYTHON_GIT
         return PYTHON_GIT

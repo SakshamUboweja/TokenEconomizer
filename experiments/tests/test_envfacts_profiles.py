@@ -85,7 +85,7 @@ def test_composed_profile_renders_both_layers_and_briefs_the_proposer(tmp_path):
     runner = _RecordingRunner()
     cfg = InjectionConfig(enabled=True, profile="envfacts+distiller", propose_every=1)
     stage = PrefixStage(cfg, "acme/widget", str(tmp_path), fresh=True, runner=runner,
-                        agent="codex", adapter=SwebenchAdapter())
+                        adapter=SwebenchAdapter())
     assert isinstance(stage.distiller, ComposedDistiller)
     total_opt = 0
     for i in range(6):
@@ -113,7 +113,7 @@ def test_composed_profile_renders_both_layers_and_briefs_the_proposer(tmp_path):
 def test_envfacts_alone_still_needs_no_runner(tmp_path):
     cfg = InjectionConfig(enabled=True, profile="envfacts")
     stage = PrefixStage(cfg, "acme/widget", str(tmp_path), fresh=True, runner=None,
-                        agent="codex", adapter=SwebenchAdapter())
+                        adapter=SwebenchAdapter())
     assert stage.render() == "" and stage.reason == "envfacts"
 
 

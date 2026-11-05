@@ -46,7 +46,7 @@ class Economizer:
         self.injection = PrefixStage(
             config.injection, repo, results_root, fresh,
             runner=injection_runner, optimizer_model=optimizer_model,
-            adapter=self.adapter, agent=agent)
+            adapter=self.adapter)
 
         # ---- tooling (untooling) ----
         judge_tool_runner = _resolve() if config.tooling.judge else None

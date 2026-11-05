@@ -40,8 +40,7 @@ import os
 import re
 from collections import Counter
 
-from ..names import repo_filename
-from .lifecycle import Lifecycle
+from .lifecycle import Lifecycle, state_path
 from .observe import (DEFAULT_VOCAB, NETWORK_ERRORS, form_failed, form_worked, is_bare,
                       label_rule, observe_task)
 
@@ -250,13 +249,11 @@ class EnvFactsDistiller:
         prefix = d.render()                         # block for the NEXT task ("" if none)
         d.update(transcript_path, iid=..., resolved=...)
         d.save(root)
-    `runner`/`model` are accepted and ignored: nothing here is paid. `vocab` is the domain's
-    `Vocabulary` (default Python/git); `injectable_claims()` is what a paid proposer stacked
-    on top is told not to restate. `max_facts` / `max_tokens` cap the rendered block
-    (default MAX_FACTS / MAX_TOKENS).
+    `vocab` is the domain's `Vocabulary` (default Python/git); `injectable_claims()` is what a
+    paid proposer stacked on top is told not to restate. `max_facts` / `max_tokens` cap the
+    rendered block (default MAX_FACTS / MAX_TOKENS).
     """
-    def __init__(self, repo, runner=None, model="agent", vocab=None, max_facts=None,
-                 max_tokens=None):
+    def __init__(self, repo, vocab=None, max_facts=None, max_tokens=None):
         self.max_facts = int(max_facts or MAX_FACTS)
         self.max_tokens = int(max_tokens or MAX_TOKENS)
         self.repo = repo
@@ -272,7 +269,7 @@ class EnvFactsDistiller:
     def header(self):
         return GENERIC_HEADER if self.vocab.generic else HEADER
 
-    def render(self, task=None):
+    def render(self):
         chosen = self._select()
         self.last_injected = {f.id for f in chosen}
         if not chosen:
@@ -336,7 +333,7 @@ class EnvFactsDistiller:
         return lines
 
     # ---- update --------------------------------------------------------------------
-    def update(self, transcript_path, iid="", resolved=None, edited=None):
+    def update(self, transcript_path, iid="", resolved=None):
         try:
             digest = observe_task(transcript_path, self.vocab)
         except Exception:
@@ -344,7 +341,7 @@ class EnvFactsDistiller:
             self.last_injected = set()
             return
         obs = digest["obs"]
-        files = set(digest["edited"]) if edited is None else set(edited)
+        files = set(digest["edited"])
         injected = set(self.last_injected)
         verdicts = {}
 
@@ -405,7 +402,7 @@ class EnvFactsDistiller:
             a_runner_ok = any(o.form == a_form and form_worked(o)
                               for o in by_intent.get(
                                   "run_build" if intent == "run_build" else "run_tests", []))
-            fired = a_failed or (f.id in injected and b_ran and not a_failed)
+            fired = a_failed or (f.id in injected and b_ran)
             if a_failed or (b_ran and not a_runner_ok):
                 verdict = "confirm"
             elif a_runner_ok:
@@ -458,10 +455,10 @@ class EnvFactsDistiller:
                 for b_obs in runs[i + 1:]:
                     if b_obs.form != a_obs.form or not b_obs.loaded:
                         continue
-                    rule = next((r for b in b_obs.labels for r in [label_rule(a, b)] if r), None)
+                    b, rule = next(((b, r) for b in b_obs.labels for r in [label_rule(a, b)] if r),
+                                   (None, None))
                     if rule is None:
                         continue
-                    b = next(b for b in b_obs.labels if label_rule(a, b) == rule)
                     fid = f"arg_repair:{a_obs.form}:{rule[0]}:{rule[1]}"
                     f = self.facts.get(fid)
                     if f is None:
@@ -482,7 +479,7 @@ class EnvFactsDistiller:
             bad_loaded = any(o.loaded and any(bad(x) for x in o.labels) for o in mine)
             good_loaded = any(o.loaded and any(not bad(x) for x in o.labels) for o in mine)
             exercised = bool(mine)
-            fired = bad_failed or (f.id in injected and good_loaded and not bad_failed)
+            fired = bad_failed or (f.id in injected and good_loaded)
             if bad_loaded:
                 verdict = "contradict"
             elif bad_failed or good_loaded:
@@ -582,9 +579,7 @@ class EnvFactsDistiller:
     # ---- persistence -------------------------------------------------------------
     @staticmethod
     def _path(root, repo):
-        d = os.path.join(root, STATE_SUBDIR)
-        os.makedirs(d, exist_ok=True)
-        return os.path.join(d, repo_filename(repo) + ".json")
+        return state_path(root, STATE_SUBDIR, repo)
 
     def save(self, root):
         with open(self._path(root, self.repo), "w", encoding="utf-8") as fh:
@@ -593,8 +588,7 @@ class EnvFactsDistiller:
                        "facts": {k: f.to_dict() for k, f in self.facts.items()}}, fh, indent=2)
 
     @classmethod
-    def load(cls, repo, root, runner=None, model="agent", vocab=None, max_facts=None,
-             max_tokens=None):
+    def load(cls, repo, root, vocab=None, max_facts=None, max_tokens=None):
         self = cls(repo, vocab=vocab, max_facts=max_facts, max_tokens=max_tokens)
         p = self._path(root, repo)
         if not os.path.exists(p):

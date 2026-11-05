@@ -10,6 +10,7 @@ import os
 from ..stage import Stage
 from . import distiller as _distiller
 from .distiller import Distiller
+from .envfacts import EnvFactsDistiller
 
 
 # ---- composition: the free environment layer under the paid manual -------------------
@@ -26,14 +27,10 @@ class ComposedDistiller:
     def opt_tokens(self):
         return self.dist.opt_tokens
 
-    @property
-    def now(self):
-        return self.dist.now
-
-    def render(self, task=None):
-        a = self.env.render(task)
-        b = self.dist.render(task)
-        return (a + ("\n" if a and b else "") + b) if (a or b) else ""
+    def render(self):
+        a = self.env.render()
+        b = self.dist.render()
+        return a + ("\n" if a and b else "") + b
 
     def injected_ids(self):
         return self.env.injected_ids()
@@ -41,9 +38,9 @@ class ComposedDistiller:
     def seed_injected(self, ids):
         self.env.seed_injected(ids)
 
-    def update(self, transcript_path, iid="", resolved=None, edited=None):
-        self.env.update(transcript_path, iid=iid, resolved=resolved, edited=edited)
-        self.dist.update(transcript_path, iid=iid, resolved=resolved, edited=edited)
+    def update(self, transcript_path, iid="", resolved=None):
+        self.env.update(transcript_path, iid=iid, resolved=resolved)
+        self.dist.update(transcript_path, iid=iid, resolved=resolved)
 
     def save(self, root):
         self.env.save(root)
@@ -64,10 +61,8 @@ class PrefixStage(Stage):
     name = "prefix"
 
     def __init__(self, cfg, repo, results_root, fresh,
-                 runner=None, optimizer_model="agent", adapter=None, agent=None):
+                 runner=None, optimizer_model="agent", adapter=None):
         self.results_root = results_root
-        self.adapter = adapter
-        self.agent = agent
         # The Distiller is the single source of truth for the proposer cadence: rebind
         # the module global that update()'s gate reads (process-local, idempotent).
         pe = int(getattr(cfg, "propose_every", 0) or 0)
@@ -79,7 +74,6 @@ class PrefixStage(Stage):
         vocab = adapter.env_vocabulary() if hasattr(adapter, "env_vocabulary") else None
         env = None
         if "envfacts" in profile:
-            from .envfacts import EnvFactsDistiller
             caps = {"max_facts": getattr(cfg, "max_facts", 0) or None,
                     "max_tokens": getattr(cfg, "max_tokens", 0) or None}
             env = (EnvFactsDistiller(repo, vocab=vocab, **caps) if fresh
@@ -107,7 +101,7 @@ class PrefixStage(Stage):
 
     def render(self, task=None):
         """The firing-gated repo manual injected into the NEXT task's prefix."""
-        return self.distiller.render(task=task) if self.distiller else ""
+        return self.distiller.render()
 
     def injected_ids(self):
         """The environment facts the last `render` chose, [] without that layer."""

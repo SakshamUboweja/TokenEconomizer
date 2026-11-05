@@ -80,7 +80,7 @@ def _fold_microskills(ctx, adapter, run_dir, session_id, injected=None, imported
               if icfg.paid and not imported and not sidecall.paused(ctx.host.name, ctx.root)
               else None)
     stage = PrefixStage(icfg, ctx.repo.label, ctx.mech_dir, False, runner=runner,
-                        optimizer_model="agent", adapter=adapter, agent=ctx.host.name)
+                        optimizer_model="agent", adapter=adapter)
     srow = {"resolved": None}
     task = {"instance_id": session_id}
     if injected is not None:
