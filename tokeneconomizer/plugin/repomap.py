@@ -209,7 +209,7 @@ def for_prompt(ctx, prompt):
     idents = prompt_idents(prompt)
     python = read_state(ctx).get("python")
     if idents and python:
-        text, err = generate(ctx, python, idents, timeout=ctx.config.repomap_timeout)
+        text, _ = generate(ctx, python, idents, timeout=ctx.config.repomap_timeout)
         if text.strip():
             return HEADER + text, "prompt"
     block = cached_block(ctx)
