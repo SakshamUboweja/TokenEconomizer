@@ -54,7 +54,7 @@ class LiveController:
             # to tell which repository the session belongs to, when its log does not say.
             s = {"session_id": self.sid, "host": self.host.name, "started": time.time(),
                  "cwd": self.host.cwd(self.p, self.ctx.env), "turns": [], "nudges": 0,
-                 "aborts": 0, "judge_tokens": 0.0, "writer_tokens": 0.0,
+                 "aborts": 0,
                  **self.host.session_state(self.ctx.env)}
         return s
 
@@ -82,7 +82,7 @@ class LiveController:
     def handle(self):
         # A payload without a session id is not a hook call any host makes; recording it would
         # leave an "unknown" session behind.
-        if not self.cfg.enabled or not self.host.session_id(self.p):
+        if not self.sid:
             return {}
         self.ctx.settle()
         self.cfg = self.ctx.config
@@ -91,11 +91,15 @@ class LiveController:
         handler = {"SessionStart": self.session_start, "UserPromptSubmit": self.user_prompt,
                    "PostToolUse": self.post_tool, "PostToolUseFailure": self.post_tool,
                    "Stop": self.stop, "SessionEnd": self.session_end}.get(event)
-        return (handler() or {}) if handler else {}
+        return handler() if handler else {}
 
     # ---- SessionStart -----------------------------------------------------------------
     def session_start(self):
         source = self.p.get("source") or "startup"
+        # A resumed or forked conversation already carries what the first start injected,
+        # where the agent replays it; a cleared or compacted one has lost it. ("new" is
+        # Copilot's word for "startup".)
+        fresh = source in ("startup", "new", "clear", "compact")
         try:
             ensure_launcher(self.ctx.env)
         except OSError:
@@ -110,10 +114,6 @@ class LiveController:
         if self.cfg.microskills != "off":
             inj = self.store.read("injection.json") or {}
             text = inj.get("rendered") or ""
-            # A resumed or forked conversation already carries what the first start injected,
-            # where the agent replays it; a cleared or compacted one has lost it. ("new" is
-            # Copilot's word for "startup".)
-            fresh = source in ("startup", "new", "clear", "compact")
             if not fresh and not self.host.keeps_start_context:
                 # The agent rebuilt the conversation without what its first start added: the
                 # same text again puts it back as it was (and as its prompt cache has it), so a
@@ -172,7 +172,7 @@ class LiveController:
             if repomap.stale(self.ctx):
                 repomap.spawn_refresh(self.ctx)
             at_start = self.cfg.repomap == "start" or not self.host.prompt_context
-            if at_start and source in ("startup", "new", "clear", "compact"):
+            if at_start and fresh:
                 outputs.extend(self._inject_map(s, seen, repomap.cached_block(self.ctx),
                                                 "SessionStart", "cached"))
                 s["repomap_done"] = True
@@ -264,8 +264,6 @@ class LiveController:
             loopguard.record_turn(self.store, g, level=self.cfg.loopguard_aggr,
                               overrides=self.cfg.loopguard_thresholds)
         s["turns"] = (s.get("turns") or [])[-(TURN_HISTORY - 1):] + [summary]
-        s["judge_tokens"] = float(s.get("judge_tokens", 0) or 0) + g.judge_tokens
-        s["writer_tokens"] = float(s.get("writer_tokens", 0) or 0) + g.writer_tokens
         s["turn"] = None
         return summary
 
@@ -289,7 +287,7 @@ class LiveController:
             self._close_turn(s, stopped_normally=False)
             s["turn"] = loopguard.TurnGuard(turn_key=self.host.turn_key(self.p)).to_dict()
         self._save(s)
-        return merge_outputs(*outputs) if outputs else {}
+        return merge_outputs(*outputs)
 
     def stop(self):
         if self.cfg.loopguard == "off" or self.p.get("stop_hook_active"):

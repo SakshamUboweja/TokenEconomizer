@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from tokeneconomizer.plugin import denylist, toolcheck
+from tokeneconomizer.plugin import denylist
 from tokeneconomizer.plugin.paths import ensure_launcher, secure_root
 from tokeneconomizer.plugin.store import Store
 from tests.conftest import symlink_or_skip

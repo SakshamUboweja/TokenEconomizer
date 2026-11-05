@@ -1011,7 +1011,7 @@ def test_pi_print_mode_counts_as_headless_for_the_stop_hint(env, repo):
 
 
 # ---- GitHub Copilot CLI, through the payloads it sends -------------------------------------
-from tests.test_live_core import COPILOT_POST, copilot_events  # noqa: E402
+from tests.test_live_core import copilot_events  # noqa: E402
 
 GITHUB_TOOLS = ["github-mcp-server-list_issues", "github-mcp-server-get_commit",
                 "github-mcp-server-search_code"]

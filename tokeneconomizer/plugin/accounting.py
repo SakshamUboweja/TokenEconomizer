@@ -26,10 +26,6 @@ def effective(usage):
         return pricing.effective_tokens(rec, weights=FALLBACK_WEIGHTS), "fallback"
 
 
-def overhead_total(overhead):
-    return ledger.overhead(overhead or {})
-
-
 def summarize(records):
     """Aggregate ledger records into the numbers `te status` prints.
 
@@ -42,7 +38,7 @@ def summarize(records):
     exec_total = sum(r["effective_tokens"] for r in priced)
     # `overhead` records are paid calls charged as they happened (the background stuck judge),
     # so a call that outlived its session's fold is still in the account.
-    oh_total = sum(overhead_total(r.get("overhead")) for r in records
+    oh_total = sum(ledger.overhead(r.get("overhead") or {}) for r in records
                    if r.get("kind") in ("session", "overhead"))
     return {
         "sessions": len(sessions),
