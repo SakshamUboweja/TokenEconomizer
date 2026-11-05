@@ -40,17 +40,13 @@ _SEEDS = {"swebench": list(workloads.SWEBENCH_SEEDS),
 
 def build(domain):
     """The exported document for one domain."""
-    groups = {"swebench": workloads.SWEBENCH_INSTANCES,
-              "webbench": workloads.WEBBENCH_TASKS,
-              "creddata": {"creddata": workloads.CREDDATA_INSTANCES},
-              "reposvul": {"reposvul": workloads.REPOSVUL_INSTANCES}}[domain]
     # The exported manifest is what the LAUNCHERS run, so it carries the runnable set
     # (canonical PLUS workloads.SWEBENCH_ADDED, MINUS workloads.SWEBENCH_EXCLUDED), not the
     # historical one. The excluded ids and their reasons ship alongside, so a short cell
     # reads as "deliberately skipped" rather than "silently missing", and the added ids ship
     # alongside too, so a LONGER cell reads as "deliberately extended" rather than "someone
     # ran the wrong list". workloads.task_counts()/total_tasks() are unchanged.
-    groups = workloads.runnable_instances(domain) if domain == "swebench" else groups
+    groups = workloads.runnable_instances(domain)
     doc = {
         "domain": domain,
         "description": _DOC[domain],

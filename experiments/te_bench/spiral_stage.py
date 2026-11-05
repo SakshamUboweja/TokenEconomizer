@@ -69,10 +69,8 @@ class SpiralStage:
                 "spiral_nudge_writer": self.spiral_nudge_writer,
             })
         if self.codex_tracker is not None:
-            threshold = self.codex_tracker.threshold
-            out["codex_spiral_policy"] = (
-                cs.profile_policy(self.cfg.codex_spiral_profile, threshold)
-                if threshold is not None else None)
+            out["codex_spiral_policy"] = cs.profile_policy(
+                self.cfg.codex_spiral_profile, self.codex_tracker.threshold)
         return out
 
     def after_task(self, task, row, run_dir_path, srow):

@@ -47,7 +47,6 @@ resolving to whichever machine happened to write this file):
   TE_VERBOSE             '1' prints per-task progress
 """
 import hashlib
-import inspect
 import base64
 import json
 import os
@@ -166,22 +165,6 @@ PROTECTED_TOOLS = frozenset({"Bash", "Edit", "Write", "Read"})
 # What `claude --effort` accepts. Validated at construction so a typo fails before the run
 # rather than silently falling back to the CLI default.
 EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
-
-
-def guard_accepts(param):
-    """True if `te_bench.nudge_guard.NudgeGuard` takes `param` on this checkout.
-
-    The guard's signature moves independently of this file: `never_abort` exists in
-    some versions and not in others. Passing a parameter it does not accept raises TypeError
-    inside `_make_guard`/`run_task` -- i.e. at task 0, before a single row is written --
-    so every optional guard parameter must be probed rather than assumed. Both domain
-    runners go through this one helper so the two cannot drift apart.
-    """
-    try:
-        return param in inspect.signature(
-            NudgeGuard.__init__).parameters
-    except (TypeError, ValueError):          # not introspectable: assume it does not
-        return False
 
 
 # Containers this process started and has not yet removed. Docker containers are NOT in
@@ -743,9 +726,6 @@ class ClaudeSwebenchRunner:
         cmd = ["docker", "run", "-d", "--name", name, "--entrypoint", "bash",
                "-v", f"{self.claude}:/usr/local/bin/claude:ro",
                "-e", "HOME=/tmp/agent-home", "-w", "/testbed"] + _cpu_limit_args()
-        if self.scaffold is not None:
-            for spec in self.scaffold.mounts(self.scaffold_profile):
-                cmd += ["-v", spec]
         _LIVE_CONTAINERS.add(name)
         # Container start is the one step whose latency is set by the HOST, not by us: on
         # a loaded shared box `docker run -d` can take many minutes. A timeout here costs
@@ -1004,7 +984,7 @@ class ClaudeSwebenchRunner:
             return proc.stdout
 
         return scaffolds_pkg.ScaffoldContext(
-            profile=self.scaffold_profile, container=name, task=task,
+            profile=self.scaffold_profile, task=task,
             run_dir=run_dir_path, exec_=exec_, copy_in=copy_in, host_run=_run,
             read_bytes=read_bytes, log=_log)
 
@@ -1224,20 +1204,13 @@ class ClaudeSwebenchRunner:
         """The in-flight spiral guard for this task, or None when the arm has none."""
         if not run_kwargs.get("spiral_guard"):
             return None
-        guard_kwargs = dict(
+        return NudgeGuard(
             envelope=run_kwargs.get("abort_envelope"),
             judge=run_kwargs.get("spiral_judge"),
             thr=run_kwargs.get("spiral_thr"),
-            nudge_budget=int(run_kwargs.get(
-                "spiral_nudge_budget",
-                1 if run_kwargs.get("spiral_nudge") else 0)),
+            nudge_budget=1 if run_kwargs.get("spiral_nudge") else 0,
             nudge_writer=run_kwargs.get("spiral_nudge_writer"),
             verbose=os.environ.get("TE_VERBOSE", "1") == "1")
-        # `never_abort` is CONSERVATIVE-MODE-ONLY and absent from the vendored guard on
-        # branches without trimech-safe -- see guard_accepts() for why it is probed.
-        if guard_accepts("never_abort"):
-            guard_kwargs["never_abort"] = bool(run_kwargs.get("spiral_never_abort"))
-        return NudgeGuard(**guard_kwargs)
 
     def _guard_continuation(self, guard, prompt):
         """The next segment's input after a guard stop, or falsey to stop."""
@@ -1464,7 +1437,7 @@ class ClaudeSwebenchRunner:
                 "judge": run_kwargs.get("spiral_judge") is not None,
                 "nudge_writer_llm": run_kwargs.get("spiral_nudge_writer") is not None,
                 "nudge_budget": getattr(guard, "nudge_budget", 0),
-                "never_abort": getattr(guard, "never_abort", False),
+                "never_abort": False,
             },
             "scaffold": {
                 "name": self.scaffold.name if self.scaffold else None,
@@ -2470,9 +2443,6 @@ class CodexSwebenchRunner(ClaudeSwebenchRunner):
         cmd = (["docker", "run", "-d", "--name", name, "--entrypoint", "bash"]
                + codex.container_mounts(self.codex_vendor)
                + ["-e", "HOME=/tmp/agent-home", "-w", "/testbed"] + _cpu_limit_args())
-        if self.scaffold is not None:
-            for spec in self.scaffold.mounts(self.scaffold_profile):
-                cmd += ["-v", spec]
         _LIVE_CONTAINERS.add(name)
         p = _run(cmd + [image_for(instance_id), "-lc", "sleep infinity"],
                  timeout=int(os.environ.get("TE_DOCKER_START_TIMEOUT", "900")))

@@ -39,8 +39,12 @@ class NudgeGuard:
         # then read guard.nudges_done / guard.aborted / guard.events for telemetry.
     """
 
+    # sampled-judge cadence: the base gap, and the cap its backoff grows to
+    _JUDGE_BASE_GAP = 5
+    _JUDGE_MAX_GAP = 20
+
     def __init__(self, envelope=None, judge=None, thr=None, nudge_budget=1,
-                 verbose=False, nudge_writer=None, resume_header=None):
+                 verbose=False, nudge_writer=None):
         self.envelope = envelope
         self.judge = judge            # raw digest->verdict callable (rate-limited HERE)
         self.thr = thr or DEFAULT_THRESHOLDS
@@ -51,7 +55,6 @@ class NudgeGuard:
         # safe digest the judge sees, falling back to the generic nudge_text template on
         # any empty/failed result. None => the fixed count-template (v4.3 behavior).
         self.nudge_writer = nudge_writer
-        self.resume_header = resume_header if resume_header is not None else RESUME_HEADER
         self.nudge_writer_tokens = 0  # REAL token cost of paid nudge-writer calls
         # per-segment stuck-detection state (reset by continuation() after each nudge)
         self.st = SpiralState()
@@ -65,12 +68,10 @@ class NudgeGuard:
         self.events = []              # telemetry: nudge/abort decisions
         # sampled-judge cadence (mirror run_agent's _sampled_judge: backoff on productive)
         self._judge_last = -999
-        self._judge_gap = 5
+        self._judge_gap = self._JUDGE_BASE_GAP
         self._judge_calls = 0
         self.judge_tokens = 0         # REAL token cost of all paid judge calls (mechanism
                                       # overhead folded into amortized task cost by callers)
-        self._JUDGE_BASE_GAP = 5
-        self._JUDGE_MAX_GAP = 20
 
     # ---- the paid judge, rate-limited with backoff (keyed on per-segment turns) -------
     def _sampled_judge(self, digest):
@@ -192,4 +193,4 @@ class NudgeGuard:
         self.segment += 1
         self._judge_last = -999
         self._judge_gap = self._JUDGE_BASE_GAP
-        return base_prompt + self.resume_header + text
+        return base_prompt + RESUME_HEADER + text

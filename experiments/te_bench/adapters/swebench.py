@@ -27,9 +27,8 @@ _GOLD_URL_RE = re.compile(
 
 
 def redact_gold_pointers(text):
-    """Return (redacted_text, n_redacted) with gold-solution URLs masked."""
-    n = len(_GOLD_URL_RE.findall(text or ""))
-    return _GOLD_URL_RE.sub("[link redacted]", text or ""), n
+    """Return text with gold-solution URLs masked."""
+    return _GOLD_URL_RE.sub("[link redacted]", text or "")
 
 
 class SwebenchAdapter:
@@ -77,15 +76,10 @@ class SwebenchAdapter:
             instances = json.load(fh)
         return {
             i["instance_id"]:
-                redact_gold_pointers((i.get("problem_statement") or "").strip())[0]
+                redact_gold_pointers((i.get("problem_statement") or "").strip())
             for i in instances}
 
     def env_vocabulary(self):
         """SWE-bench repositories are Python projects in git checkouts."""
         from tokeneconomizer.microskills import PYTHON_GIT
         return PYTHON_GIT
-
-    def classify_domain(self):
-        """Domain-specific tool-classifier brief, or None to use the default. SWE-bench
-        uses the default; other domains (read-only audits) override this."""
-        return None

@@ -92,7 +92,7 @@ from .swebench import (EFFORT_LEVELS, PROTECTED_TOOLS, _ANTHROPIC_DIRECT, _log,
                        answer_key_attempts,
                        _merge_usage, _row_from_result, anthropic_optimizer_call,
                        preflight_optimizer_endpoint, resolve_anthropic_key,
-                       claude_bin, cli_version, guard_accepts,
+                       claude_bin, cli_version,
                        set_optimizer_context, _cell_of, _UsageRecovery,
                        agent_credential_env)
 
@@ -866,7 +866,7 @@ class WebBenchRunner:
             return subprocess.CompletedProcess([], 0, "", "")
 
         return scaffolds_pkg.ScaffoldContext(
-            profile=self.scaffold_profile_for(home), container=None, task=task,
+            profile=self.scaffold_profile_for(home), task=task,
             run_dir=run_dir_path, exec_=exec_, copy_in=copy_in, host_run=_host,
             read_bytes=None, log=_log)
 
@@ -1432,22 +1432,13 @@ class WebBenchRunner:
         """The spiral guard for one rollout, or None when the arm has it switched off."""
         if not run_kwargs.get("spiral_guard"):
             return None
-        guard_kwargs = dict(
+        return NudgeGuard(
             envelope=run_kwargs.get("abort_envelope"),
             judge=run_kwargs.get("spiral_judge"),
             thr=run_kwargs.get("spiral_thr"),
-            nudge_budget=int(run_kwargs.get(
-                "spiral_nudge_budget",
-                1 if run_kwargs.get("spiral_nudge") else 0)),
+            nudge_budget=1 if run_kwargs.get("spiral_nudge") else 0,
             nudge_writer=run_kwargs.get("spiral_nudge_writer"),
             verbose=os.environ.get("TE_VERBOSE", "1") == "1")
-        # `never_abort` is CONSERVATIVE-MODE-ONLY and absent from the vendored guard on
-        # branches without trimech-safe -- see swebench.guard_accepts() for why it is
-        # probed. Passed to a guard that lacks the parameter, it would raise TypeError at
-        # task 0 on every guarded Web-Bench run.
-        if guard_accepts("never_abort"):
-            guard_kwargs["never_abort"] = bool(run_kwargs.get("spiral_never_abort"))
-        return NudgeGuard(**guard_kwargs)
 
     def _write_run_config(self, run_dir_path, task, arm, injected, exclude_tools,
                           max_turns, run_kwargs, sess, project):
@@ -1497,13 +1488,9 @@ class WebBenchRunner:
                 "thresholds": run_kwargs.get("spiral_thr"),
                 "judge": run_kwargs.get("spiral_judge") is not None,
                 "nudge_writer_llm": run_kwargs.get("spiral_nudge_writer") is not None,
-                "nudge_budget": run_kwargs.get(
-                    "spiral_nudge_budget",
-                    1 if run_kwargs.get("spiral_nudge") else 0),
-                # applied, not requested: on a guard without the parameter the request
-                # is silently inert, and recording it as true would misdescribe the run.
-                "never_abort": (bool(run_kwargs.get("spiral_never_abort"))
-                                if guard_accepts("never_abort") else False),
+                "nudge_budget": 1 if run_kwargs.get("spiral_nudge") else 0,
+                # the guard has no never-abort mode; recorded so rows keep their shape
+                "never_abort": False,
                 "guard_per_attempt": True,
             },
             "webbench": {

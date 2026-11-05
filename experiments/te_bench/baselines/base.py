@@ -8,8 +8,8 @@ Two objects, because a scaffold has to straddle two things that differ independe
     scaffold that hardcoded either would be silently wrong on the other -- writing
     `CLAUDE.md` for Copilot, which never reads it, produces a "scaffold" arm that is
     really a native arm with a stray file in it.
-  * `ScaffoldContext` -- the per-TASK handles (container name, exec/copy callables, the
-    task dict, the run directory). Passed rather than reached for, so a scaffold cannot
+  * `ScaffoldContext` -- the per-TASK handles (exec/copy callables, the task dict, the run
+    directory). Passed rather than reached for, so a scaffold cannot
     touch Docker except through the runner that already owns it.
 
 No module here imports Docker, or `te_harness`, or anything outside the standard
@@ -73,10 +73,9 @@ class AgentProfile:
 class ScaffoldContext:
     """Per-task handles a scaffold is allowed to use."""
 
-    def __init__(self, *, profile, container, task, run_dir, exec_, copy_in, host_run,
+    def __init__(self, *, profile, task, run_dir, exec_, copy_in, host_run,
                  read_bytes=None, log=None):
         self.profile = profile
-        self.container = container
         self.task = task
         self.run_dir = run_dir
         self.exec_ = exec_          # (script, *, timeout=, env=) -> CompletedProcess
@@ -181,10 +180,6 @@ class Scaffold:
     # Paths (repo-relative, git-pathspec syntax) this scaffold writes under /testbed. The
     # runner subtracts them from the graded diff -- see the package docstring.
     patch_excludes = ()
-
-    def mounts(self, profile):
-        """Extra `docker run -v` spec strings. Default: none."""
-        return []
 
     def preflight(self, profile):
         """Raise ScaffoldError for a misconfiguration that dooms EVERY task. Called once,

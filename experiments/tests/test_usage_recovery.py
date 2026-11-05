@@ -122,21 +122,7 @@ def test_merge_reason_names_every_degraded_segment():
     assert _merge_usage(a, b)["usage_incomplete_reason"] == "spiral_guard_stop+task_timeout"
 
 
-# ---- the guard-parameter probe --------------------------------------------------------
-def test_guard_accepts_probes_the_vendored_signature():
-    """`never_abort` exists in some vendored versions of the guard and not in others, and
-    passing a keyword the guard does not take raises at task 0, before a row is written. So
-    neither runner passes it unconditionally: both go through this one probe."""
-    from te_bench import nudge_guard as spiral_vendor
-    from te_harness.swebench import guard_accepts
-    assert guard_accepts("envelope") is True
-    assert guard_accepts("no_such_parameter_exists") is False
-    # whatever this checkout's guard takes, the probe agrees with it
-    import inspect
-    params = inspect.signature(spiral_vendor.NudgeGuard.__init__).parameters
-    assert guard_accepts("never_abort") == ("never_abort" in params)
-
-
+# ---- the guard construction -----------------------------------------------------------
 def test_webbench_guard_constructs_on_this_checkout():
     """`_make_guard` must not raise whatever the vendored guard's signature is. It takes no
     `self` state, so it is callable unbound."""

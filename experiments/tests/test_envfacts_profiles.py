@@ -4,7 +4,6 @@ import os
 
 from tokeneconomizer.microskills import envfacts as ef, observe
 from tokeneconomizer.microskills import ComposedDistiller, PrefixStage
-from te_bench import mechanism_arms as ci
 from tokeneconomizer.config import InjectionConfig
 from te_bench.config import needs_optimizer
 from te_bench.adapters.swebench import SwebenchAdapter
@@ -30,12 +29,6 @@ def _broken(tmp_path, i):
         _cmd("python -m pytest tests/test_a.py -q", f"{BASE}: No module named pytest", 1),
         _cmd(f"{PROJ} -m pytest tests/test_a.py -q", "1 passed", 0)])
     return p
-
-
-# ---- the Codex lane's injection profiles ---------------------------------------------
-def test_codex_injection_profiles():
-    assert ci.CODEX_DEFAULT_PROFILE == "envfacts+distiller"
-    assert ci.CODEX_FREE_PROFILE == "envfacts"
 
 
 # ---- vocabulary plug-in ----------------------------------------------------------------
@@ -127,16 +120,15 @@ def test_codex_arms_carry_the_intended_profiles():
     `codex-inject-envfacts`.
     """
     from te_bench.arms import ARMS, ARM_ORDER
-    from te_bench import mechanism_arms as ci
     default = ARMS["codex-inject"].cfg().injection
-    assert default.profile == ci.CODEX_DEFAULT_PROFILE == "envfacts+distiller"
+    assert default.profile == "envfacts+distiller"
     assert default.paid and default.propose_every == 10
     assert needs_optimizer(ARMS["codex-inject"].cfg()) is True
     # the untool stack follows the default; the ablation does not
     assert ARMS["codex-inject-untool"].cfg().injection.profile == "envfacts+distiller"
     assert ARMS["codex-inject-untool"].cfg().tooling.codex_untool is True
     free = ARMS["codex-inject-envfacts"].cfg().injection
-    assert free.profile == ci.CODEX_FREE_PROFILE == "envfacts" and not free.paid
+    assert free.profile == "envfacts" and not free.paid
     assert needs_optimizer(ARMS["codex-inject-envfacts"].cfg()) is False
     # the pre-2026-09-12 name of the default still resolves to the same configuration
     assert ARMS["codex-inject-distiller"].cfg().injection == default

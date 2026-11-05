@@ -22,11 +22,9 @@ results tree, no datasets, and no Docker.
 __all__ = [
     "SWEBENCH_INSTANCES", "SWEBENCH_SEEDS", "SWEBENCH_FULL_SPLIT_ONLY",
     "SWEBENCH_EXCLUDED", "SWEBENCH_ADDED", "runnable_instances",
-    "SWEBENCH_COPILOT_EXTRA", "WEBBENCH_TASKS", "WEBBENCH_SEEDS",
-    "WEBBENCH_TASKS_PUBLISHED_2026_08",
+    "WEBBENCH_TASKS", "WEBBENCH_SEEDS",
     "CREDDATA_INSTANCES", "CREDDATA_SEEDS", "REPOSVUL_INSTANCES", "REPOSVUL_SEEDS",
-    "CODEX_SWEBENCH_RUNS", "DOMAINS", "instances", "task_counts", "total_tasks",
-    "swebench_image_tag", "filter_tasks",
+    "DOMAINS", "instances", "task_counts", "total_tasks", "swebench_image_tag",
 ]
 
 # ---------------------------------------------------------------------------
@@ -152,20 +150,10 @@ SWEBENCH_FULL_SPLIT_ONLY: frozenset[str] = frozenset((
     "pydata__xarray-7400", "pydata__xarray-7444",
 ))
 
-# The Copilot sweep additionally ran this instance; the Claude sweep and the published
-# task_counts (xarray = 39) do not include it. Recorded for completeness only.
-SWEBENCH_COPILOT_EXTRA: frozenset[str] = frozenset((
-    "pydata__xarray-7179",
-))
-
-# Codex-native arms ran a subset of the same instances, one seed per repo.
-CODEX_SWEBENCH_RUNS: tuple[tuple[str, str], ...] = (
-    ("django/django", "s0"),
-    ("sympy/sympy", "s0"),
-    ("scikit-learn/scikit-learn", "s1"),
-    ("sphinx-doc/sphinx", "s0"),
-    ("pydata/xarray", "s1"),
-)
+# Provenance: the Copilot sweep additionally ran pydata__xarray-7179, which the Claude sweep
+# and the published task_counts (xarray = 39) do not include. The Codex-native arms ran a
+# subset of the same instances, one seed per repo: django s0, sympy s0, scikit-learn s1,
+# sphinx s0 and xarray s1.
 
 # ---------------------------------------------------------------------------
 # Web-Bench  (trimech-web; 5 projects, each a SEQUENTIALLY DEPENDENT stream)
@@ -233,12 +221,8 @@ WEBBENCH_TASKS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# The project set the 2026-08 exports were actually run on. FROZEN: it describes a run that
-# already happened and cannot be edited after the fact. Kept here so WEBBENCH_TASKS above is
-# free to move on while the record stays pinned to what was measured.
-WEBBENCH_TASKS_PUBLISHED_2026_08: dict[str, int] = {
-    "flex": 21, "expressjs": 20, "react": 20, "prisma": 20, "calculator": 21,
-}
+# Provenance: the 2026-08 exports ran on flex (21 tasks), expressjs (20), react (20), prisma
+# (20) and calculator (21); WEBBENCH_TASKS above has since moved on.
 
 # Web-Bench seeds are LETTERED in the published trees (not 0/1/2 like the other domains).
 WEBBENCH_SEEDS: tuple[str, ...] = ("A", "B", "C")
@@ -378,6 +362,10 @@ SWEBENCH_EXCLUDED: dict[str, str] = {
 # $DATA/swebench/gold_screen_added.jsonl. Re-run it if you extend this table again; a new
 # id that fails belongs nowhere near a paid sweep. Note two ids carry an empty
 # PASS_TO_PASS and so have no regression guard: scikit-learn-11585 and -11596.
+#
+# Every added id is outside SWE-bench_Verified (both repos' Verified rows were already
+# fully consumed by the published streams), so provisioning must read the FULL test split
+# for these -- exactly like SWEBENCH_FULL_SPLIT_ONLY above.
 SWEBENCH_ADDED: dict[str, tuple[str, ...]] = {
     "scikit-learn/scikit-learn": (
         "scikit-learn__scikit-learn-3840", "scikit-learn__scikit-learn-7760",
@@ -406,12 +394,6 @@ SWEBENCH_ADDED: dict[str, tuple[str, ...]] = {
         "sympy__sympy-18477", "sympy__sympy-19201",
     ),
 }
-
-# Every added id is outside SWE-bench_Verified (both repos' Verified rows were already
-# fully consumed by the published streams), so provisioning must read the FULL test split
-# for these -- exactly like SWEBENCH_FULL_SPLIT_ONLY above.
-SWEBENCH_ADDED_FULL_SPLIT_ONLY: frozenset[str] = frozenset(
-    i for ids in SWEBENCH_ADDED.values() for i in ids)
 
 
 def runnable_instances(domain, group=None):
@@ -449,18 +431,3 @@ def swebench_image_tag(instance_id):
     """
     return f"swebench/sweb.eval.x86_64.{instance_id.replace('__', '_1776_')}:latest"
 
-
-def filter_tasks(tasks, domain, group=None):
-    """Subset a driver task list to the canonical workload, preserving its order.
-
-    `tasks` is the list of ``{instance_id, problem_statement, repo}`` dicts the driver
-    loads from ``TOKENECONOMIZER_<DOMAIN>_TASKS``. Use this to pin a run to exactly the
-    evaluated instances instead of whatever the task file happens to contain::
-
-        tasks = json.load(open(os.environ['TOKENECONOMIZER_SWEBENCH_TASKS']))
-        tasks = workloads.filter_tasks(tasks, 'swebench', 'pydata/xarray')
-
-    Unlike the driver's ``--repo`` prefix match, an empty result is returned as empty
-    rather than falling back to the unfiltered list."""
-    wanted = set(instances(domain, group))
-    return [t for t in tasks if t.get("instance_id") in wanted]

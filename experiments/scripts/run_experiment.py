@@ -89,11 +89,7 @@ from tokeneconomizer import ledger                                  # noqa: E402
 #                                       integrations (siblings of trimech), codex-*
 #   experiments/te_bench/baselines/arms.py   rtk / serena / repomap -- external tool only
 #   experiments/te_bench/arms.py             assembles both in canonical order
-#
-# `Arm`, `cfg` and `arm` come from te_bench._armspec; `_cfg`/`_arm` remain as aliases
-# because tests and older callers refer to them by those names.
 from te_bench.arms import ARMS, SCAFFOLD_ARMS                # noqa: E402,F401
-from te_bench._armspec import Arm, arm as _arm, cfg as _cfg  # noqa: E402,F401
 
 
 # ---- built-in offline StubRunner (smoke test only) ---------------------------------------

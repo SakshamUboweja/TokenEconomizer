@@ -29,14 +29,6 @@ def test_swebench_counts_are_the_evaluated_set():
     }
 
 
-def test_webbench_2026_08_export_is_frozen():
-    """A record of a run that already happened, pinned on its own rather than to the live
-    sweep set -- which has since retired `flex` and `prisma`."""
-    assert workloads.WEBBENCH_TASKS_PUBLISHED_2026_08 == {
-        "flex": 21, "expressjs": 20, "react": 20, "prisma": 20, "calculator": 21,
-    }
-
-
 def test_webbench_sweep_set_is_five_distinct_streams():
     """The live sweep set. Its IDENTITY is the invariant, not just its size: Web-Bench reuses
     one task stream across whole project families, so a well-meant substitution can silently
@@ -111,7 +103,6 @@ def test_added_does_not_move_the_published_record():
 def test_added_ids_need_the_full_split():
     """Both repos' Verified rows were already spent, so every addition is full-split-only."""
     added = {i for ids in workloads.SWEBENCH_ADDED.values() for i in ids}
-    assert workloads.SWEBENCH_ADDED_FULL_SPLIT_ONLY == added
     assert not (added & workloads.SWEBENCH_FULL_SPLIT_ONLY)
 
 
@@ -119,10 +110,6 @@ def test_every_added_instance_yields_a_tag():
     for ids in workloads.SWEBENCH_ADDED.values():
         for iid in ids:
             assert workloads.swebench_image_tag(iid).endswith(":latest")
-
-
-def test_copilot_extra_is_not_in_the_canonical_set():
-    assert not (workloads.SWEBENCH_COPILOT_EXTRA & set(workloads.instances("swebench")))
 
 
 def test_image_tag_uses_the_1776_separator():
@@ -143,18 +130,6 @@ def test_instances_rejects_unknown_domain_and_group():
         except KeyError:
             continue
         raise AssertionError(f"expected KeyError for {bad}")
-
-
-def test_filter_tasks_keeps_order_and_drops_strangers():
-    ids = workloads.instances("swebench", "pydata/xarray")
-    tasks = [{"instance_id": "not-a-real-instance"}] + [{"instance_id": i} for i in ids]
-    kept = workloads.filter_tasks(tasks, "swebench", "pydata/xarray")
-    assert [t["instance_id"] for t in kept] == list(ids)
-
-
-def test_filter_tasks_returns_empty_rather_than_falling_back():
-    """The driver's --repo filter falls back to the full list on no match; this must not."""
-    assert workloads.filter_tasks([{"instance_id": "x"}], "swebench", "sympy/sympy") == []
 
 
 def test_exported_json_exists_for_every_domain():

@@ -33,10 +33,6 @@ ENVFACTS = dict(enabled=True, profile="envfacts")
 # layer therefore mostly abstains, and the open-vocabulary proposer is what is left to find
 # repository facts; its spend is charged to the arm.
 ENVFACTS_PLUS = dict(enabled=True, profile="envfacts+distiller", propose_every=10)
-# The Codex lane's injection profiles by name: the default, and its LLM-free ablation
-# (arm `codex-inject-envfacts`).
-CODEX_DEFAULT_PROFILE = ENVFACTS_PLUS["profile"]
-CODEX_FREE_PROFILE = ENVFACTS["profile"]
 # The Codex-native flag sets, split out for exactly the reason the generic ones above are:
 # `codex-trimech` co-activates THESE, so each Codex single-mechanism arm is a true ablation
 # of it rather than a separately tuned arm.
@@ -125,11 +121,7 @@ MECHANISM_ARMS = {
     # trimech = manual4 injection + evidence untooling(3)+judge + spiral guard/judge/nudge
     "trimech": _trimech(),
     # short Web-Bench streams add the LLM-written nudge + a cold-start frozen envelope
-    "trimech-web": arm(
-        "manual4",
-        lambda: cfg(injection=InjectionConfig(**INJECT),
-                    tooling=ToolingConfig(**UNTOOL),
-                    spiral=SpiralConfig(**SPIRAL_WEB))),
+    "trimech-web": _trimech(spiral=SPIRAL_WEB),
 
     # ---- all three, co-activated with an external tool baseline --------------------------
     # Siblings of `trimech`, and identical to it apart from the scaffold they name. Both
