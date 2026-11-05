@@ -6,8 +6,8 @@ answers fit an interactive session instead of a sealed benchmark task. It implem
 DomainAdapter methods those two stages call:
 
   * `protected_tools` adds what a PERSON needs to the work surface. The benchmark protected set
-    keeps Bash/Read/Edit/...; `toolprune.tools.INAPPLICABLE_TOOLS` then treats AskUserQuestion, plan
-    mode and subagents as inapplicable "by construction" for a headless sealed task. A person
+    keeps Bash/Read/Edit/...; a static inapplicable list would treat AskUserQuestion, plan mode
+    and subagents as inapplicable "by construction" for a headless sealed task. A person
     does use them interactively, so those are protected here, and so are the web tools, however
     long they go unused, and whatever the person lists in `toolprune_protect` (names, or
     patterns such as `mcp__headroom__*`); only evidence (loaded but unused for N sessions) can propose anything

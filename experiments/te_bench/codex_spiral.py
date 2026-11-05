@@ -37,13 +37,15 @@ import re
 import shlex
 from typing import Iterable, Optional
 
+from tokeneconomizer.trace.codex import shell_patch_paths as patch_paths
+
 
 _TEST_RUN_RE = re.compile(
     r"(?i)(?:^|[;&|]\s*|\n\s*|[\"'])"
     # Leading `K=V` assignments, and rtk's Codex-mode prefix (`rtk pytest`, `rtk proxy pytest`,
     # `rtk K=V pytest`): the agent is TOLD to type it on every command, and a detector that
     # did not absorb it would see no test run on `codex-trimech-rtk` -- no trustworthy green,
-    # no finalize, every failure signature blind. Kept in step with trace.RTK_PREFIX_RE.
+    # no finalize, every failure signature blind. Kept in step with trace.calls.RTK_PREFIX_RE.
     r"(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+|rtk\s+(?:proxy\s+)?)*"
     r"(?:python(?:\d+(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest|django\s+test)|"
     r"pytest|py\.test|"
@@ -359,24 +361,10 @@ def failure_signatures(output: str) -> set[str]:
 # `file_change` items altogether: every edit arrives as a `command_execution` whose command
 # is `apply_patch <<'PATCH' ... *** Begin Patch ... *** Update File: <p>`. A controller that
 # only reads `file_change` therefore never sees an edit there, never registers a trustworthy
-# green, and never fires. The paths are read from the patch header lines, and the
-# edit counts when the apply succeeded (the CLI's own "Success." marker, or exit 0).
-_PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$", re.M)
-_GIT_APPLY_RE = re.compile(r"\bgit\s+apply\b")
-_GIT_APPLY_PATH_RE = re.compile(r"^\+\+\+ b/(.+?)\s*$", re.M)
+# green, and never fires. The paths are read from the patch header lines (`patch_paths`, which
+# is `trace.codex.shell_patch_paths`), and the edit counts when the apply succeeded (the CLI's
+# own "Success." marker, or exit 0).
 _PATCH_SUCCESS_RE = re.compile(r"(?i)\bSuccess\.\s*(?:Updated|Applied)")
-
-
-def patch_paths(command: str) -> tuple[str, ...]:
-    """Paths a shell-applied patch command touches, () when it is not one."""
-    command = command or ""
-    if "*** Begin Patch" in command:
-        found = _PATCH_FILE_RE.findall(command)
-    elif _GIT_APPLY_RE.search(command):
-        found = _GIT_APPLY_PATH_RE.findall(command)
-    else:
-        return ()
-    return tuple(dict.fromkeys(p.strip() for p in found if p.strip()))
 
 
 def shell_patch_applied(command: str, output: str, exit_code) -> bool:

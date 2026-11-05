@@ -55,14 +55,12 @@ class ToolingConfig:
 
     Evidence pruning (Claude Code / Copilot):
       * evidence          -- drop a tool loaded-but-unused for >= this many tasks (>0 on).
-      * evidence_reaudit  -- periodically reload the full catalog every this many tasks.
       * judge             -- add a per-task instruction-aware LLM tool judge.
 
     Codex capability pruning:
       * codex_untool      -- enable the evidence-gated, resolve-safe capability controller.
     """
     evidence: int = 0
-    evidence_reaudit: int = 0
     judge: bool = False
     codex_untool: bool = False
 
@@ -137,7 +135,6 @@ class EconomizerConfig:
             profile=str(getattr(args, "inject_profile", "") or InjectionConfig.profile))
         tooling = ToolingConfig(
             evidence=int(getattr(args, "untool_evidence", 0)),
-            evidence_reaudit=int(getattr(args, "untool_evidence_reaudit", 0)),
             judge=bool(getattr(args, "untool_judge", False)),
             codex_untool=bool(getattr(args, "codex_untool", False)))
         spiral = SpiralConfig(

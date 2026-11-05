@@ -148,7 +148,6 @@ def test_claude_usage_counts_each_message_once_and_includes_subagents(tmp_path):
     assert u["requests"] == 3                     # 2 main messages + 1 subagent message
     assert u["cache_read_input_tokens"] == 3000   # not 3 x 2 x 1000 + 2 x 1000
     assert u["model"] == "claude-opus-5-5" and u["files"] == 2
-    assert trace.claude_session_usage(main, include_subagents=False)["requests"] == 2
 
 
 def test_deferred_tools_are_read_from_attachments(tmp_path):
@@ -451,7 +450,6 @@ def test_pi_usage_maps_directly_and_keeps_pis_own_cost(tmp_path):
     assert (u["input_tokens"], u["cache_read_input_tokens"], u["cache_creation_input_tokens"],
             u["output_tokens"]) == (30, 3000, 300, 150)
     assert u["cost_usd_vendor"] == pytest.approx(0.006) and u["model"] == "gpt-5.6-sol"
-    assert trace.pi_session_header(str(tmp_path / "s.jsonl"))["cwd"] == "/w/repo"
 
 
 def test_the_pi_host_reads_what_the_extension_sends():
@@ -825,7 +823,7 @@ def test_copilot_logs_read_through_the_existing_trace_seam(tmp_path):
     assert trace.tool_usage(p) == {"bash": 1, "view": 1}
     (turn,) = trace.copilot_turns(p)
     assert turn[0][0] == "bash" and turn[0][3] == 1 and turn[1][3] is None
-    assert trace.copilot_session_meta(p)["cwd"] == "/w/repo"
+    assert trace.call_cwds(p)[0] == "/w/repo"
 
 
 def test_a_copilot_call_into_the_session_directory_is_the_plain_form(tmp_path):

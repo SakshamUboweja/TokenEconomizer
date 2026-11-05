@@ -53,22 +53,19 @@ def copilot_session_cwd(lines):
     return None
 
 
-def copilot_session_meta(path):
-    """{cwd, model, cli_version, session_id} from a Copilot session's `session.start`."""
-    for ev in _copilot_events(path):
-        if ev.get("type") == "session.start":
-            d = ev.get("data") or {}
-            return {"cwd": (d.get("context") or {}).get("cwd"), "model": d.get("selectedModel"),
-                    "cli_version": d.get("copilotVersion"), "session_id": d.get("sessionId")}
-    return {}
-
-
 def copilot_session_usage(path):
     """Token breakdown of a Copilot session from its `session.shutdown` events."""
     totals = {"input_tokens": 0, "cache_read_input_tokens": 0,
               "cache_creation_input_tokens": 0, "output_tokens": 0}
     requests, models, seen, tool_defs = 0, {}, False, None
+    # The model the session started on, for a session killed before it shut down; read in the
+    # same pass rather than a second read of the log.
+    start_model, started = None, False
     for ev in _copilot_events(path):
+        if ev.get("type") == "session.start" and not started:
+            started = True
+            start_model = (ev.get("data") or {}).get("selectedModel")
+            continue
         if ev.get("type") != "session.shutdown":
             continue
         d = ev.get("data") or {}
@@ -88,7 +85,7 @@ def copilot_session_usage(path):
             tool_defs = int(d["toolDefinitionsTokens"])
     if not seen:
         out = {k: None for k in totals}
-        out.update(requests=0, model=copilot_session_meta(path).get("model"))
+        out.update(requests=0, model=start_model)
         return out
     totals.update(requests=requests, model=max(models, key=models.get) if models else None,
                   tool_definitions_tokens=tool_defs)

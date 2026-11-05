@@ -15,7 +15,7 @@ def test_defaults_all_off():
 def test_from_args_generic_trimech():
     args = SimpleNamespace(
         inject=True, propose_every=5,
-        untool_evidence=3, untool_evidence_reaudit=12, untool_judge=True,
+        untool_evidence=3, untool_judge=True,
         spiral_guard=True, spiral_judge=True, spiral_nudge=True)
     cfg = EconomizerConfig.from_args(args)
     assert cfg.injection.enabled and cfg.injection.propose_every == 5

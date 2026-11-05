@@ -11,6 +11,7 @@ after the regular update, so the call still counts once.
 import re
 import shlex
 
+from ..trace.codex import PATCH_FILE_RE
 from .state import basename
 
 _HEREDOC_START = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
@@ -31,7 +32,6 @@ _PY_WRITE_PATH_LIT = re.compile(
 _PY_WRITE_PATH_VAR = re.compile(r"\b([A-Za-z_]\w*)\.write_(?:text|bytes)\(")
 # Codex's patch format, as `apply_patch <<'PATCH'` takes it on stdin (seen live on 0.163.0, the
 # edit and the test run in one command); `trace.codex` reads the same lines from a session log.
-_PATCH_FILE = re.compile(r"^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$", re.M)
 
 
 def _not_scratch(path):
@@ -202,7 +202,8 @@ def shell_edits_and_reverts(cmd):
         elif head == "tee":
             found += [t for t in tokens[1:] if not t.startswith("-") and _SOURCE_FILE.search(t)]
         elif head == "apply_patch":
-            found += _PATCH_FILE.findall("\n".join(bodies + [" ".join(tokens[1:])])) or ["(patch)"]
+            patch = "\n".join(bodies + [" ".join(tokens[1:])])
+            found += PATCH_FILE_RE.findall(patch) or ["(patch)"]
         elif head == "patch" or (head == "git" and len(tokens) > 1 and tokens[1] == "apply"):
             found.append("(patch)")
         else:

@@ -28,7 +28,7 @@ class ToolingStage(Stage):
     name = "tooling"
 
     def __init__(self, cfg, agent, optimizer_model,
-                 judge_tool_runner=None, adapter=None,
+                 judge_tool_runner=None, *, adapter,
                  repo=None, results_root=None, fresh=False):
         self.cfg = cfg
         self.agent = agent
@@ -53,7 +53,7 @@ class ToolingStage(Stage):
 
         # ---- generic per-task instruction-aware judge: redacted-issue lookup ----
         self.problem_by_iid = {}
-        if cfg.judge and adapter is not None:
+        if cfg.judge:
             try:
                 self.problem_by_iid = adapter.problem_statements()
             except Exception as e:
@@ -62,7 +62,6 @@ class ToolingStage(Stage):
                 self.problem_by_iid = {}
 
         # per-task locals stashed by build_tools for after_task
-        self._ev_reaudit = False
         self._exclude_tools = None
         self._task_judge_tokens = 0
         self._task_judge_dropped = []
@@ -73,7 +72,6 @@ class ToolingStage(Stage):
         cfg = self.cfg
         self._task_judge_tokens = 0
         self._task_judge_dropped = []
-        self._ev_reaudit = False
 
         # Codex path: freeze the capability mask; the runner maps it to prune-items.
         if self.codex_profile is not None:
@@ -85,28 +83,22 @@ class ToolingStage(Stage):
 
         # Generic evidence path (Claude / Copilot).
         if cfg.evidence:
-            ev_reaudit = (cfg.evidence_reaudit > 0 and i > 0
-                          and i % cfg.evidence_reaudit == 0)
-            self._ev_reaudit = ev_reaudit
-            if ev_reaudit:
-                exclude_tools = []
-            else:
-                protected = self.adapter.protected_tools() if self.adapter else frozenset()
-                trace_excluded = [
-                    t for t in self.catalog_tools
-                    if t not in protected and t not in self.used_tools
-                    and self.tool_unused_streaks.get(t, 0) >= cfg.evidence]
-                if cfg.judge and self.catalog_tools and self.problem_by_iid.get(iid):
-                    cand = {t: self.catalog_desc.get(t, "") for t in self.catalog_tools
-                            if t not in protected and t not in self.used_tools
-                            and t not in trace_excluded}
-                    if cand:
-                        loadmap, self._task_judge_tokens = judge_tools_for_task(
-                            self.problem_by_iid[iid], cand, self.judge_tool_runner,
-                            model=self.optimizer_model)
-                        self._task_judge_dropped = [t for t, load in loadmap.items()
-                                                    if not load and t in cand]
-                exclude_tools = sorted(set(trace_excluded) | set(self._task_judge_dropped))
+            protected = self.adapter.protected_tools()
+            trace_excluded = [
+                t for t in self.catalog_tools
+                if t not in protected and t not in self.used_tools
+                and self.tool_unused_streaks.get(t, 0) >= cfg.evidence]
+            if cfg.judge and self.catalog_tools and self.problem_by_iid.get(iid):
+                cand = {t: self.catalog_desc.get(t, "") for t in self.catalog_tools
+                        if t not in protected and t not in self.used_tools
+                        and t not in trace_excluded}
+                if cand:
+                    loadmap, self._task_judge_tokens = judge_tools_for_task(
+                        self.problem_by_iid[iid], cand, self.judge_tool_runner,
+                        model=self.optimizer_model)
+                    self._task_judge_dropped = [t for t, load in loadmap.items()
+                                                if not load and t in cand]
+            exclude_tools = sorted(set(trace_excluded) | set(self._task_judge_dropped))
             self._exclude_tools = exclude_tools
             return exclude_tools
 
@@ -135,8 +127,7 @@ class ToolingStage(Stage):
     def after_task(self, task, row, run_dir_path, srow):
         cfg = self.cfg
         transcript = os.path.join(run_dir_path, "transcript.jsonl")
-        task_used = (set(self.adapter.tool_usage(transcript).keys())
-                     if self.adapter else set())
+        task_used = set(self.adapter.tool_usage(transcript).keys())
         self.used_tools.update(task_used)
 
         # ---- Codex capability pruning ----
@@ -164,18 +155,13 @@ class ToolingStage(Stage):
         if cfg.evidence:
             srow["untooled_excluded"] = row.get("untooled_excluded", [])
             srow["untool_evidence_excluded"] = list(self._exclude_tools or [])
-            srow["untool_evidence_reaudit"] = bool(self._ev_reaudit)
-            if not self._exclude_tools and self.adapter is not None:
-                # Source-aware where the adapter supports it: an empty catalog is
-                # indistinguishable from "this agent loaded no tools", which would leave
-                # pruning a no-op unnoticed (trace.catalog_sources). Record which source won
-                # so a change of log format shows up in the rows, and say so out loud the
-                # first time nothing parses.
-                getter = getattr(self.adapter, "parse_catalog_with_source", None)
-                if getter is not None:
-                    cat, src = getter(run_dir_path, self.agent)
-                else:
-                    cat, src = self.adapter.parse_catalog(run_dir_path, self.agent), "unknown"
+            if not self._exclude_tools:
+                # Source-aware: an empty catalog is indistinguishable from "this agent loaded
+                # no tools", which would leave pruning a no-op unnoticed
+                # (trace.catalog.catalog_sources). Record which source won so a change of log
+                # format shows up in the rows, and say so out loud the first time nothing
+                # parses.
+                cat, src = self.adapter.parse_catalog_with_source(run_dir_path, self.agent)
                 srow["untool_catalog_source"] = src
                 if cat:
                     self.catalog_tools.update(cat.keys())
@@ -185,7 +171,7 @@ class ToolingStage(Stage):
                     print(f"[tooling] !! no tool catalog parsed for agent={self.agent} "
                           f"from {run_dir_path} -- evidence pruning can drop NOTHING and "
                           f"this arm will behave as its baseline. Likely an agent-CLI "
-                          f"upgrade that moved the catalog; see trace.catalog_sources.",
+                          f"upgrade that moved the catalog; see trace.catalog.catalog_sources.",
                           flush=True)
             for t in self.catalog_tools:
                 if t in task_used:

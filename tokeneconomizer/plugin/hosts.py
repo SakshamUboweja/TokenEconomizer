@@ -47,13 +47,13 @@ import shlex
 import time
 
 from .. import trace
+from ..trace.codex import PATCH_FILE_RE
 
 _RESPONSE_KEYS = ("stdout", "stderr", "output", "aggregated_output", "formatted_output",
                   "content", "result", "error", "message", "text_result_for_llm")
 _EXIT_RE = re.compile(r"(?im)^\s*(?:exit code|process exited with code)[:\s]+(-?\d+)")
 # Copilot appends this line to every shell result.
 _COPILOT_EXIT_RE = re.compile(r"<shellId: [^>]*?completed with exit code (-?\d+)>")
-_PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$", re.M)
 RESULT_CAP = 20000      # characters of a tool result the guard folds (errors live early)
 # Notices a host shows as progress lines ahead of the hook's JSON (Copilot); `hook.main` writes
 # them and removes the key, so it never reaches an agent as an output field.
@@ -377,7 +377,7 @@ class Codex(Host):
         if low == "apply_patch":
             patch = next((v for v in (args.get("input"), args.get("patch"), args.get("command"))
                           if isinstance(v, str)), "")
-            paths = _PATCH_FILE_RE.findall(patch)
+            paths = PATCH_FILE_RE.findall(patch)
             return "apply_patch", {"path": paths[0] if paths else "", "paths": paths}, text, code
         return name, args, text, code
 

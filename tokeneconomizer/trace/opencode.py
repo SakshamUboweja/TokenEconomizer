@@ -93,11 +93,6 @@ def _text(msg):
                      and not p.get("synthetic") and not p.get("ignored"))
 
 
-def opencode_session_info(path):
-    """The session's `info` ({id, directory, ...}), {} if the export does not carry it."""
-    return _load(path)[0]
-
-
 def opencode_prompt_count(path):
     """How many prompts the conversation ran: user messages that hold text."""
     return sum(1 for m in _load(path)[1] if _role(m) == "user" and _text(m).strip())

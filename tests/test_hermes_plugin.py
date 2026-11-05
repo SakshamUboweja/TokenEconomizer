@@ -203,8 +203,9 @@ def test_an_export_holds_no_words_of_the_conversation_and_reads_the_same(home, t
     path = str(tmp_path / "s.json")
     assert trace.hermes_export(home.db, "s", path)
     assert "SECRET" not in open(path, encoding="utf-8").read()
-    assert trace.hermes_session_info(path)["cwd"] == "/w/repo"
-    assert "system_prompt" not in trace.hermes_session_info(path)
+    info = json.load(open(path, encoding="utf-8"))["info"]
+    assert info["cwd"] == "/w/repo"
+    assert "system_prompt" not in info
     assert repos.session_cwd({"transcript": path}) == "/w/repo"
     assert trace.hermes_prompt_count(path) == 2
     out = str(tmp_path / "t.jsonl")
@@ -245,7 +246,7 @@ def test_a_rotated_session_is_read_as_one_with_each_call_once(home, tmp_path, na
     home.usage("tip")
     path = str(tmp_path / "root.json")
     assert trace.hermes_export(home.db, named, path)
-    assert trace.hermes_session_info(path)["id"] == "tip"
+    assert json.load(open(path, encoding="utf-8"))["info"]["id"] == "tip"
     assert trace.hermes_prompt_count(path) == 2
     assert trace.hermes_session_to_claude(path, str(tmp_path / "t.jsonl")) == 1
     assert trace.hermes_session_usage(path)["requests"] == 2

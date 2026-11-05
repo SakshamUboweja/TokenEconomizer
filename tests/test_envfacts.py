@@ -349,7 +349,7 @@ def test_prefix_stage_envfacts_profile_needs_no_runner_and_reports_zero(tmp_path
 def test_the_classifier_sees_through_rtks_command_prefix():
     """An agent told to type `rtk pytest`, `rtk git status`, `rtk proxy <cmd>` must still be
     read as running the tests, fetching, querying the repository. Pinned as bare == prefixed,
-    so a new wrapper spelling has to be added to trace.RTK_PREFIX_RE and nowhere else."""
+    so a new wrapper spelling has to be added to trace.calls.RTK_PREFIX_RE and nowhere else."""
     from tokeneconomizer.trace import strip_rtk_prefix
     cases = ("python -m pytest tests/ -q", "pytest -q", "bin/test sympy/x.py", "K=1 pytest -q",
              "pip install foo", "curl https://x", "git status", "rg -n foo src")
