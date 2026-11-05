@@ -27,7 +27,7 @@ at all.)
 
 Env: ANTHROPIC_API_KEY; TE_CATALOG_OUT (default: the repo's tokeneconomizer/trace/claude_tool_catalog.json),
 TE_CATALOG_PORT (default 8770), TE_CATALOG_DESC_CHARS (default 300 -- comfortably above
-reflect's max_desc=200 default, keeps the committed file small).
+`trace.catalog._MAX_DESC` (200), and still keeps the committed file small).
 """
 import json
 import os

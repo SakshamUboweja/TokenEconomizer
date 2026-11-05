@@ -383,7 +383,8 @@ def test_a_deny_list_applied_in_one_clone_is_still_proposed_in_another(tmp_path)
     assert denylist.restore(b, st) == []                     # nothing of b's to take back
     assert denylist.applied_for(st, a) == ["CronCreate"]
     assert denylist.apply(b, ["CronCreate", "Monitor"], st) == ["CronCreate", "Monitor"]
-    assert denylist.applied(st) == ["CronCreate", "Monitor"]
+    assert (denylist.applied_for(st, b) == ["CronCreate", "Monitor"]
+            and denylist.applied_for(st, a) == ["CronCreate"])
 
 
 def test_a_deny_list_record_from_0_1_0_is_still_read(tmp_path):
@@ -396,7 +397,7 @@ def test_a_deny_list_record_from_0_1_0_is_still_read(tmp_path):
     json.dump({"permissions": {"deny": ["Monitor", "Mine"]}}, open(path, "w"))
     assert denylist.restore(a, st) == ["Monitor"]
     assert json.load(open(path)) == {"permissions": {"deny": ["Mine"]}}
-    assert denylist.applied(st) == []
+    assert denylist.applied_for(st, a) == []
 
 
 def test_pending_sessions_fold_oldest_first(tmp_path, env):

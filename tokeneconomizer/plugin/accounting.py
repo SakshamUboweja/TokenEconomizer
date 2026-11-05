@@ -16,7 +16,7 @@ FALLBACK_WEIGHTS = dict(input=1.0, cache_read=0.10, cache_write=1.25, output=6.0
 
 def effective(usage):
     """(effective_tokens, priced_by) for a usage breakdown; (None, "no_usage") without one."""
-    if not usage or usage.get("input_tokens") is None:
+    if not pricing.has_breakdown(usage):
         return None, "no_usage"
     rec = {k: usage.get(k) for k in ("input_tokens", "cache_read_input_tokens",
                                      "cache_creation_input_tokens", "output_tokens", "model")}
@@ -24,10 +24,6 @@ def effective(usage):
         return pricing.effective_tokens(rec), "model"
     except ValueError:
         return pricing.effective_tokens(rec, weights=FALLBACK_WEIGHTS), "fallback"
-
-
-def overhead_total(overhead):
-    return ledger.overhead(overhead or {})
 
 
 def summarize(records):
@@ -42,7 +38,7 @@ def summarize(records):
     exec_total = sum(r["effective_tokens"] for r in priced)
     # `overhead` records are paid calls charged as they happened (the background stuck judge),
     # so a call that outlived its session's fold is still in the account.
-    oh_total = sum(overhead_total(r.get("overhead")) for r in records
+    oh_total = sum(ledger.overhead(r.get("overhead") or {}) for r in records
                    if r.get("kind") in ("session", "overhead"))
     return {
         "sessions": len(sessions),

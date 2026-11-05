@@ -92,6 +92,13 @@ class RtkScaffold(Scaffold):
         return f"{profile.bin_dir}/rtk"
 
     @classmethod
+    def _probe_exec(cls, ctx):
+        """Whether the binary runs by absolute path under a PATH without bin_dir, the way
+        the agent's hook subprocess (or, on Codex, its own shell) resolves it."""
+        return ctx.exec_(f"env PATH=/usr/bin:/bin {cls._hook_binary(ctx.profile)} --version",
+                         timeout=60).returncode == 0
+
+    @classmethod
     def _claude_hook(cls, profile):
         return {"hooks": {"PreToolUse": [
             {"matcher": "Bash", "hooks": [
@@ -144,7 +151,7 @@ class RtkScaffold(Scaffold):
         staged = self.stage_host_binary(ctx)
         notes["rtk_staged_host"] = bool(staged)
         if staged:
-            dest = f"{ctx.profile.bin_dir}/rtk"
+            dest = self._hook_binary(ctx.profile)
             ctx.copy_in(self.bin_path(), dest)
             ver = ctx.exec_(f"chmod +x {dest} && rtk --version", timeout=60)
         else:
@@ -183,8 +190,7 @@ class RtkScaffold(Scaffold):
         # path, under a PATH that does NOT include bin_dir -- so a hook that cannot execute
         # is a flag on the row rather than a `command not found` on every shell call inside
         # a run that still reports healthy.
-        probe = ctx.exec_(f"env PATH=/usr/bin:/bin {hook_bin} --version", timeout=60)
-        notes["rtk_hook_exec_ok"] = probe.returncode == 0
+        notes["rtk_hook_exec_ok"] = self._probe_exec(ctx)
         # 3c. Registered AND executable is still not REWRITING -- see _probe_hook_rewrites.
         notes["rtk_hook_rewrites"] = self._probe_hook_rewrites(ctx, ctx.profile.kind)
         if notes.get("rtk_hook_registered") and not notes["rtk_hook_rewrites"]:
@@ -241,9 +247,7 @@ class RtkScaffold(Scaffold):
         notes["rtk_agents_inlined"] = present > 0
         # The agent's own shell must find the binary under the PATH IT runs with -- the
         # same probe the hook path makes, for the same reason.
-        probe = ctx.exec_(f"env PATH=/usr/bin:/bin {self._hook_binary(ctx.profile)} --version",
-                          timeout=60)
-        notes["rtk_hook_exec_ok"] = probe.returncode == 0
+        notes["rtk_hook_exec_ok"] = self._probe_exec(ctx)
         if not notes["rtk_instructions_written"]:
             ctx.log("rtk: WARNING binary present but the rtk rule did NOT reach "
                     f"{home}/AGENTS.md -- this arm would run as native. "

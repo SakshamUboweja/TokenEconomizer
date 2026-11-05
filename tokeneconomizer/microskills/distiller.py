@@ -20,10 +20,10 @@ import json
 import os
 import re
 
-from ..names import repo_filename
 from ..trace import call_cwds
 from ..trace.claude import CONVERSATION
-from .lifecycle import Lifecycle, edited_files, edited_pyfiles
+from .lifecycle import Lifecycle, edited_files, edited_pyfiles, state_path
+from .observe import repository_top
 
 # ---- proposer cadence / caps / gates ---------------------------------------
 PROPOSE_EVERY  = 8      # one LLM proposer call per this many tasks (PrefixStage rebinds
@@ -56,8 +56,7 @@ def load_calls(fp):
         is_codex = is_copilot = False
         with open(fp, encoding="utf-8", errors="replace") as probe:
             for line in probe:
-                if ('"item.completed"' in line
-                        or '"type": "item.completed"' in line):
+                if '"item.completed"' in line:
                     is_codex = True
                     break
                 if ('"tool.execution_start"' in line
@@ -110,13 +109,15 @@ def bash_cmds(calls):
 
 
 # ---- compact digest: one dict per finished task (the proposer's only view) --
-def build_digest(repo, transcript_path, iid, resolved=None, generic=False):
+def build_digest(repo, transcript_path, iid, resolved=None, generic=False, calls=None):
+    """`calls` is the transcript's `load_calls`, when the caller has already parsed it."""
     if generic:
-        return build_generic_digest(repo, transcript_path, iid, resolved)
-    try:
-        calls = load_calls(transcript_path)
-    except Exception:
-        return None
+        return build_generic_digest(repo, transcript_path, iid, resolved, calls=calls)
+    if calls is None:
+        try:
+            calls = load_calls(transcript_path)
+        except Exception:
+            return None
     cmds = bash_cmds(calls)
     cmd_blob = "\n".join(c for c, _ in cmds)
     out_blob = "\n".join(o for _, o in cmds)
@@ -199,15 +200,15 @@ def error_signature(out, roots=()):
     return ""
 
 
-def build_generic_digest(repo, transcript_path, iid, resolved=None):
+def build_generic_digest(repo, transcript_path, iid, resolved=None, calls=None):
     """The digest the plugin's proposer reads: every edited file whatever its language, the
     build/test/lint commands run, the commands that failed with a normalized error line, and
     flags that hold in any ecosystem. Raw blobs stay host-side for the detectors."""
-    from .observe import repository_top
-    try:
-        calls = load_calls(transcript_path)
-    except Exception:
-        return None
+    if calls is None:
+        try:
+            calls = load_calls(transcript_path)
+        except Exception:
+            return None
     cmds = bash_cmds(calls)
     start = next((c for c in call_cwds(transcript_path) if c), None)
     roots = sorted({r for r in (start, repository_top(start)) if r}, key=len, reverse=True)
@@ -289,46 +290,15 @@ GENERIC_PREDICATES = ("ran_checks", "ran_tests", "command_failed", "missing_comm
 
 
 class Detector:
-    """Base detector: scope/fired name a built-in predicate or a regex over commands."""
-    def __init__(self, spec):
-        self.scope   = spec.get("scope", "")
-        self.confirm = _rx(spec.get("confirm"))
-        self.contra  = _rx(spec.get("contradict"))
-        self.fired   = spec.get("fired") or spec.get("scope")
-        self.raw = spec
-
-    def _exercised(self, dg):
-        p = PREDICATES.get(self.scope)
-        if p is not None:
-            return bool(p(dg))
-        rx = _rx(self.scope)
-        return bool(rx and rx.search(dg["_cmd_blob"]))
-
-    def _fired(self, dg):
-        p = PREDICATES.get(self.fired)
-        if p is not None:
-            return bool(p(dg))
-        rx = _rx(self.fired)
-        return bool(rx and rx.search(dg["_cmd_blob"]))
-
-    def verdict(self, dg):
-        exercised = self._exercised(dg)
-        if not exercised:
-            return None, False, False
-        blob = dg["_cmd_blob"] + "\n" + dg["_out_blob"]
-        if self.contra and self.contra.search(blob):
-            return "contradict", True, True
-        if self.confirm and self.confirm.search(blob):
-            return "confirm", self._fired(dg), True
-        return None, self._fired(dg), True
-
-
-class DetectorV3Scope(Detector):
-    """Detector whose scope/fired may reference an authored EXTRACTOR feature (resolved
-    against the digest's per-task `features`), then a built-in predicate, then a regex."""
-    def __init__(self, spec, features):
-        self.features = features
-        super().__init__(spec)
+    """A fact's detector, rebuilt per task: scope/fired name an authored EXTRACTOR feature
+    (resolved against that task's digest `features`), then a built-in predicate, then a regex
+    over the task's commands."""
+    def __init__(self, spec, features=None):
+        self.scope    = spec.get("scope", "")
+        self.confirm  = _rx(spec.get("confirm"))
+        self.contra   = _rx(spec.get("contradict"))
+        self.fired    = spec.get("fired") or spec.get("scope")
+        self.features = {} if features is None else features
 
     def _lookup(self, name, dg):
         if name in self.features:
@@ -338,11 +308,16 @@ class DetectorV3Scope(Detector):
         rx = _rx(name)
         return bool(rx and rx.search(dg["_cmd_blob"]))
 
-    def _exercised(self, dg):
-        return self._lookup(self.scope, dg)
-
-    def _fired(self, dg):
-        return self._lookup(self.fired, dg)
+    def verdict(self, dg):
+        exercised = self._lookup(self.scope, dg)
+        if not exercised:
+            return None, False, False
+        blob = dg["_cmd_blob"] + "\n" + dg["_out_blob"]
+        if self.contra and self.contra.search(blob):
+            return "contradict", True, True
+        if self.confirm and self.confirm.search(blob):
+            return "confirm", self._lookup(self.fired, dg), True
+        return None, self._lookup(self.fired, dg), True
 
 
 # ---- authored extractor: raw-event predicate -> named feature --------------
@@ -375,7 +350,6 @@ class Fact:
         self.claim     = spec.get("claim", spec["id"])
         self.injection = spec.get("injection", self.claim)
         self.high      = bool(spec.get("high_stakes", False))
-        self.detector  = Detector(spec.get("detector", {}))
         self.spec      = spec
         self.life      = Lifecycle(self.id, self.high)   # the validated state machine
 
@@ -392,10 +366,8 @@ class Fact:
     def observe(self, now, dg, files):
         """Fold one finished-task digest into this fact's lifecycle. The detector is
         rebuilt per task against that task's authored features."""
-        det = DetectorV3Scope(self.spec.get("detector", {}), dg.get("features", {}))
-        verdict, fired, exercised = det.verdict(dg)
-        self.life.update(now, verdict, fired, exercised, files)
-        return verdict, fired, exercised
+        det = Detector(self.spec.get("detector", {}), dg.get("features", {}))
+        self.life.update(now, *det.verdict(dg), files)
 
     def to_dict(self):
         return {"spec": self.spec, "life": self.life.to_dict()}
@@ -482,11 +454,10 @@ PROPOSER_SYSTEM_GENERIC = (_GENERIC_HEAD + PROPOSER_SYSTEM[len(_PROPOSER_HEAD):]
 
 def build_proposer_prompt(repo, window, existing, existing_feats, raw_excerpts,
                           external=(), generic=False):
-    """`existing` maps each fact id to its claim (ids alone are accepted). The plugin's
+    """`existing` maps each fact id to its claim. The plugin's
     (`generic`) prompt shows the claims, so a fact already held is not authored again under a
     new id; the experiments' prompt names the ids alone, as the paper ran it."""
     view = [proposer_view(d) for d in window]
-    existing = existing if isinstance(existing, dict) else dict.fromkeys(existing, "")
     if generic:
         known = ("\n\nExisting facts, as `id: claim` (do NOT restate or paraphrase one under a "
                  "NEW id; re-emit an id with ONLY detector.contradict changed to revise its "
@@ -569,9 +540,6 @@ class Distiller:
         self.raw_window = []            # bounded recent [(cmd,out)] per task
 
     # ---- featurization -----------------------------------------------------
-    def _observe_fact(self, fact, now, dg, files):
-        return fact.observe(now, dg, files)
-
     def _featurize(self, dg, cmds):
         feats = {}
         for name, ex in self.extractors.items():
@@ -580,7 +548,6 @@ class Distiller:
             except Exception:
                 feats[name] = False
         dg["features"] = feats
-        return dg
 
     def _sensed(self, cmd):
         """Does a built-in sense already read this command?"""
@@ -588,31 +555,31 @@ class Distiller:
             return bool(CHECK_RE.search(cmd))
         return bool(PYTEST_RE.search(cmd) or REPRO_RE.search(cmd))
 
+    def _covered(self, cmd):
+        """Does SOME extractor or built-in test/repro sense read this command?"""
+        return (self._sensed(cmd)
+                or any(ex.rx and ex.rx.search(cmd) for ex in self.extractors.values()))
+
     def _coverage(self, cmds):
         """Fraction of commands matched by SOME extractor or built-in test/repro sense."""
         if not cmds:
             return 1.0
-        seen = 0
-        for c, _ in cmds:
-            hit = (self._sensed(c)
-                   or any(ex.rx and ex.rx.search(c) for ex in self.extractors.values()))
-            if hit:
-                seen += 1
-        return seen / len(cmds)
+        return sum(1 for c, _ in cmds if self._covered(c)) / len(cmds)
 
     def _abstaining_excerpts(self):
-        """Uncovered command templates from the raw window, for extractor authoring."""
+        """The first RAW_SAMPLE uncovered command templates from the raw window, for extractor
+        authoring."""
         out = []
         for cmds in self.raw_window[-WINDOW:]:
             for c, _ in cmds:
-                if self._sensed(c):
-                    continue
-                if any(ex.rx and ex.rx.search(c) for ex in self.extractors.values()):
+                if self._covered(c):
                     continue
                 t = re.sub(r"\s+", " ", c).strip()[:100]
                 if t and t not in out:
                     out.append(t)
-        return out[:RAW_SAMPLE * 4]
+                    if len(out) >= RAW_SAMPLE:
+                        return out
+        return out
 
     # ---- proposer tick (the only paid step) --------------------------------
     def _maybe_propose(self):
@@ -620,7 +587,7 @@ class Distiller:
             return
         cov = [self._coverage(c) for c in self.raw_window[-WINDOW:]]
         abstaining = cov and (sum(cov) / len(cov)) < ABSTAIN_GATE
-        excerpts = self._abstaining_excerpts()[:RAW_SAMPLE] if abstaining else []
+        excerpts = self._abstaining_excerpts() if abstaining else []
         external = list(self.external_facts()) if self.external_facts else []
         prompt = build_proposer_prompt(self.repo, self.window,
                                        {i: f.claim for i, f in self.facts.items()},
@@ -638,16 +605,15 @@ class Distiller:
 
     def _admit_extractor(self, spec):
         if spec["name"] in self.extractors or len(self.extractors) >= MAX_EXTRACTORS:
-            return False
+            return
         ex = Extractor(spec)
         if ex.rx is None:
-            return False
+            return
         self.extractors[ex.name] = ex
         # retro-featurize the window so a same-tick fact can reference it
         for dg in self.window:
             cmds = _reparse_cmds(dg)
             dg.setdefault("features", {})[ex.name] = ex.compute(cmds)
-        return True
 
     # ---- fact admission: new id = append; existing id = contradict-only revise --
     def _ground(self, spec):
@@ -658,7 +624,7 @@ class Distiller:
             dg = by_iid.get(iid)
             if dg is None:
                 continue
-            det = DetectorV3Scope(spec.get("detector", {}), dg.get("features", {}))
+            det = Detector(spec.get("detector", {}), dg.get("features", {}))
             v, _, _ = det.verdict(dg)
             if v == "confirm":
                 hits += 1
@@ -668,9 +634,7 @@ class Distiller:
         """Fresh Fact replayed over the window -> enters with real lifecycle state."""
         f = Fact(spec)
         for i, dg in enumerate(self.window):
-            self._observe_fact(
-                f, self.now - len(self.window) + i, dg,
-                set(dg["edited_files"]))
+            f.observe(self.now - len(self.window) + i, dg, set(dg["edited_files"]))
         return f
 
     def _frozen_view(self, spec):
@@ -711,7 +675,7 @@ class Distiller:
         return True, "revised-contradict"
 
     # ---- the two operations the Stage calls --------------------------------
-    def render(self, task=None):
+    def render(self):
         """Firing-gated manual for the NEXT task. '' if nothing qualifies yet."""
         lines = [f.injection for f in self.facts.values() if f.injectable()]
         if not lines:
@@ -721,7 +685,7 @@ class Distiller:
                    else "— learned from prior tasks in this repo"))
         return head + "\n" + "\n".join(f"- {l}" for l in lines) + "\n"
 
-    def update(self, transcript_path, iid="", resolved=None, edited=None):
+    def update(self, transcript_path, iid="", resolved=None):
         """Fold in the finished task, then advance the clock (may trigger a paid tick)."""
         try:
             calls = load_calls(transcript_path)
@@ -729,7 +693,8 @@ class Distiller:
             self.now += 1
             return
         cmds = bash_cmds(calls)
-        dg = build_digest(self.repo, transcript_path, iid, resolved, generic=self.generic)
+        dg = build_digest(self.repo, transcript_path, iid, resolved, generic=self.generic,
+                          calls=calls)
         if dg is None:
             self.now += 1
             return
@@ -739,7 +704,7 @@ class Distiller:
             self.raw_window = self.raw_window[-WINDOW:]
         files = set(dg["edited_files"])
         for f in self.facts.values():
-            self._observe_fact(f, self.now, dg, files)
+            f.observe(self.now, dg, files)
         self.window.append(dg)
         if len(self.window) > WINDOW:
             self.window = self.window[-WINDOW:]
@@ -750,9 +715,7 @@ class Distiller:
     # ---- persistence -------------------------------------------------------
     @staticmethod
     def _path(root, repo):
-        d = os.path.join(root, STATE_SUBDIR)
-        os.makedirs(d, exist_ok=True)
-        return os.path.join(d, repo_filename(repo) + ".json")
+        return state_path(root, STATE_SUBDIR, repo)
 
     def save(self, root):
         # The window goes with the facts: a proposer reloaded for each session (the plugin's
@@ -789,10 +752,7 @@ class Distiller:
     def debug_row(self):
         row = {k: {"state": f.state, "fire": f"{f.life.fire_num}/{f.life.fire_den}",
                    "rate": round(f.firing_rate(), 2), "inject": f.injectable(),
-                   "claim": f.claim[:60]}
+                   "claim": f.claim[:60], "rev": f.spec.get("rev", 1)}
                for k, f in self.facts.items()}
         row["_extractors"] = sorted(self.extractors)
-        for fid, f in self.facts.items():
-            if isinstance(row.get(fid), dict):
-                row[fid]["rev"] = f.spec.get("rev", 1)
         return row

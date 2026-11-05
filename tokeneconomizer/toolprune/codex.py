@@ -28,8 +28,9 @@ import hashlib
 import json
 import os
 import re
-from collections import Counter
 from tokeneconomizer.names import repo_filename
+
+from ..trace.jsonl import records
 
 
 # ===========================================================================
@@ -158,57 +159,40 @@ def _audit_capabilities(item):
     return found
 
 
+_NEEDLE_STARTED = '"item.started"'
+_NEEDLE_COMPLETED = '"item.completed"'
+
+
 def inspect_usage(transcript_path):
     """Audit capability leakage in a Codex trace, de-duplicated by transcript item id."""
     capabilities = _AUDIT_CAPABILITIES
     attempted = {capability: set() for capability in capabilities}
     completed = {capability: set() for capability in capabilities}
     failed = {capability: set() for capability in capabilities}
-    tools = Counter()
-    seen_tools = set()
-    reconnects = 0
-    try:
-        handle = open(transcript_path, encoding="utf-8", errors="replace")
-    except OSError:
-        handle = None
-    if handle is not None:
-        with handle:
-            for line_number, line in enumerate(handle, 1):
-                try:
-                    event = json.loads(line)
-                except Exception:
-                    continue
-                phase = str(event.get("type") or "")
-                if phase == "error" and "reconnecting" in str(
-                        event.get("message") or event.get("error") or "").lower():
-                    reconnects += 1
-                if phase not in ("item.started", "item.completed"):
-                    continue
-                item = event.get("item") or {}
-                represented = _audit_capabilities(item) & set(capabilities)
-                if not represented:
-                    continue
-                item_id = str(item.get("id") or item.get("call_id") or line_number)
-                status = str(item.get("status") or "").lower()
-                label = str(
-                    item.get("name") or item.get("tool_name")
-                    or item.get("tool") or item.get("type") or "unknown")
-                if item_id not in seen_tools:
-                    tools[label] += 1
-                    seen_tools.add(item_id)
-                for capability in represented:
-                    attempted[capability].add(item_id)
-                    if phase == "item.completed":
-                        if status in _FAILED_STATUSES:
-                            failed[capability].add(item_id)
-                        else:
-                            completed[capability].add(item_id)
+    audited = set(capabilities)
+    # The needles only skip parsing; a line can hold one without being of that type, so the
+    # type is still checked.
+    for n, event in enumerate(records(transcript_path, _NEEDLE_STARTED, _NEEDLE_COMPLETED), 1):
+        phase = str(event.get("type") or "")
+        if phase not in ("item.started", "item.completed"):
+            continue
+        item = event.get("item") or {}
+        represented = _audit_capabilities(item) & audited
+        if not represented:
+            continue
+        item_id = str(item.get("id") or item.get("call_id") or n)
+        status = str(item.get("status") or "").lower()
+        for capability in represented:
+            attempted[capability].add(item_id)
+            if phase == "item.completed":
+                if status in _FAILED_STATUSES:
+                    failed[capability].add(item_id)
+                else:
+                    completed[capability].add(item_id)
     return {
         "attempted": {c: len(attempted[c]) for c in capabilities},
         "completed": {c: len(completed[c]) for c in capabilities},
         "failed": {c: len(failed[c]) for c in capabilities},
-        "tools": dict(sorted(tools.items())),
-        "reconnects": reconnects,
     }
 
 
@@ -272,7 +256,6 @@ PROBE_PRIORITY = (
     "interactive_guidance")
 
 PROFILE_VERSION = "codex-recent-experience-untool-indirect-use-core"
-RETAINED_CAPABILITIES = ("apply_patch", "exec_command", "planning", "write_stdin")
 
 
 def relay_capabilities(logical_capabilities):
@@ -393,11 +376,11 @@ class CodexUntoolProfile:
         os.replace(temporary, self.path)
 
     # ---- probe / demotion policy -----------------------------------------
-    def _choose_probe(self, applied_pruned, hints):
+    def _choose_probe(self, applied_pruned):
         completed = int(self.state.get("tasks_completed", 0) or 0)
         if completed < int(self.state.get("next_probe_at", FIRST_PROBE_AT)):
             return None
-        eligible = set(applied_pruned) - set(hints)
+        eligible = set(applied_pruned)
         if not eligible:
             return None
         start = int(self.state.get("probe_cursor", 0) or 0)
@@ -426,7 +409,7 @@ class CodexUntoolProfile:
         completed = int(self.state.get("tasks_completed", 0) or 0)
         hints = task_hints(problem_statement)
         logical = set(self.state.get("current_pruned") or ()) - set(hints)
-        probe = self._choose_probe(logical, hints)
+        probe = self._choose_probe(logical)
         if probe:
             logical.discard(probe)
         logical = sorted(logical)
@@ -441,10 +424,8 @@ class CodexUntoolProfile:
             reason = "task-hint:" + ",".join(sorted(hints))
         else:
             reason = "recent-experience-indirect-use-core-mask"
-        retained = sorted(set(RETAINED_CAPABILITIES) | set(CORE_CAPABILITIES))
         self._pending = {
             "task_id": str(task_id),
-            "profile": PROFILE_VERSION,
             "audit": completed == 0,
             "reason": reason,
             "logical_capabilities": logical,
@@ -453,9 +434,7 @@ class CodexUntoolProfile:
             "task_hints": sorted(hints),
             "probe_capability": probe,
             "probe_reason": "evidence-aging" if probe else None,
-            "tasks_completed_before": completed,
             "core_capabilities": list(CORE_CAPABILITIES),
-            "retained_capabilities": retained,
         }
         return copy.deepcopy(self._pending)
 

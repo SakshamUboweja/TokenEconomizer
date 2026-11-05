@@ -59,8 +59,7 @@ def test_prefix_stage_after_task_reports_tokens(tmp_path):
     root = str(tmp_path)
     cfg = InjectionConfig(enabled=True, propose_every=5)
     stage = PrefixStage(cfg, "acme/widget", root, fresh=True,
-                        runner=_facts_runner('{"extractors":[],"facts":[]}'),
-                        agent="claude")
+                        runner=_facts_runner('{"extractors":[],"facts":[]}'))
     rd = str(tmp_path / "run"); os.makedirs(rd)
     write_claude_transcript(os.path.join(rd, "transcript.jsonl"),
                             [("bash", {"command": "pytest"}, "ok")])

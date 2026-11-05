@@ -239,13 +239,13 @@ def test_only_rtk_is_hostable_and_it_is_the_instruction_mode(tmp_path, monkeypat
             wb.CodexWebBenchRunner(agent="codex", scaffold=other)
     # every Codex ARM that carries an unhostable scaffold is refused the same way -- today
     # exactly one, the repomap variant of codex-trimech (its generator walks `*.py`)
-    from te_bench import baselines
-    unhostable = sorted(a for a, s in baselines.ARM_SCAFFOLDS.items()
+    from te_bench.arms import SCAFFOLD_ARMS
+    unhostable = sorted(a for a, s in SCAFFOLD_ARMS.items()
                         if a.startswith("codex-") and s not in wb.WEBBENCH_SCAFFOLDS)
     assert unhostable == ["codex-trimech-repomap"], unhostable
     for arm in unhostable:
         with pytest.raises(RuntimeError, match="not wired for the Codex Web-Bench lane"):
-            wb.CodexWebBenchRunner(agent="codex", scaffold=baselines.ARM_SCAFFOLDS[arm])
+            wb.CodexWebBenchRunner(agent="codex", scaffold=SCAFFOLD_ARMS[arm])
     # rtk gets past the scaffold gate; with no key the next stop is the endpoint
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="nothing to bill"):

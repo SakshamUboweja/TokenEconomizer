@@ -17,15 +17,13 @@ thread.  Two profiles ship (`profile_policy`):
   check has passed unfiltered, every named pytest scope that failed unfiltered has since
   passed, and the trajectory has run past the resolved-task tool envelope;
 * ``defensive`` (`DEFENSIVE_POLICY`, what the Codex lane runs unless an arm says
-  otherwise, `CODEX_DEFAULT_PROFILE`): the same, plus every deterministic spiral signature
-  the controller knows -- repeated failing verification, a repeated command, blocked
-  retrieval, a wide or churning patch that keeps failing, a passing check re-run again and
-  again, a run past twice the envelope -- at most two nudges per task.
+  otherwise): the same, plus every deterministic spiral signature the controller knows --
+  repeated failing verification, a repeated command, blocked retrieval, a wide or churning
+  patch that keeps failing, a passing check re-run again and again, a run past twice the
+  envelope -- at most two nudges per task.
 
 The bare dataclass defaults (`DEFAULT_POLICY`) are a single trigger: after the envelope, a
 patch spanning at least 15 distinct files has failed verification after its latest edit.
-An orthogonal, opt-in completion audit can use the same thread once when deterministic
-end-state evidence shows an empty patch or a still-failing post-edit verification.
 """
 
 from __future__ import annotations
@@ -37,13 +35,16 @@ import re
 import shlex
 from typing import Iterable, Optional
 
+from tokeneconomizer.loopguard.envelope import _percentile
+from tokeneconomizer.trace.codex import shell_patch_paths as patch_paths
+
 
 _TEST_RUN_RE = re.compile(
     r"(?i)(?:^|[;&|]\s*|\n\s*|[\"'])"
     # Leading `K=V` assignments, and rtk's Codex-mode prefix (`rtk pytest`, `rtk proxy pytest`,
     # `rtk K=V pytest`): the agent is TOLD to type it on every command, and a detector that
     # did not absorb it would see no test run on `codex-trimech-rtk` -- no trustworthy green,
-    # no finalize, every failure signature blind. Kept in step with trace.RTK_PREFIX_RE.
+    # no finalize, every failure signature blind. Kept in step with trace.calls.RTK_PREFIX_RE.
     r"(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+|rtk\s+(?:proxy\s+)?)*"
     r"(?:python(?:\d+(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest|django\s+test)|"
     r"pytest|py\.test|"
@@ -65,15 +66,6 @@ _FAILURE_ID_RE = re.compile(
 )
 _FAILURE_LINE_RE = re.compile(
     r"(?i)(?:assertionerror|traceback|\bfailed\b|\berror:|exception)"
-)
-_RESEARCH_COMMAND_RE = re.compile(
-    r"(?i)(?:\brg\b|\bgrep\b|\bsed\s+-n\b|\bfind\b|\bcurl\b|\bwget\b|"
-    r"\bgit\s+(?:log|show|blame|branch|tag|fsck)\b|\bnl\s+-ba\b|"
-    r"\bpip\s+cache\b|python(?:\d+(?:\.\d+)?)?\s+-\s*<<)"
-)
-_FINALIZATION_COMMAND_RE = re.compile(
-    r"(?i)(?:git\s+(?:diff|status)(?:\s|$)|git\s+diff\s+--check|"
-    r"compileall|py_compile|black\s+--check|ruff\s+check|pre-commit\s+run)"
 )
 # A passing test command whose green must NOT be trusted as a full success signal:
 # it narrowed the accepted set (ran a subset, deselected, or re-ran only failures).
@@ -118,13 +110,6 @@ def verification_scopes(command: str) -> Optional[set[str]]:
              for match in _TEST_PATH_RE.finditer(command)}
     paths = {p for p in paths if p}
     return paths or {_ALL_SCOPE}
-_NO_CHANGE_CLAIM_RE = re.compile(
-    r"(?i)(?:\balready (?:fixed|resolved) (?:at|in|on|by|the|this|current)\b|"
-    r"\bno (?:additional |source )?changes? (?:are|were|is|was) "
-    r"(?:necessary|required|needed)\b)"
-)
-
-COMPLETION_AUDIT_MARKER = "[AGENTEO_CODEX_COMPLETION_AUDIT]"
 
 
 @dataclass(frozen=True)
@@ -152,27 +137,12 @@ class CodexSpiralPolicy:
     repeated_command_count: int = 3
     blocked_attempts: int = 2
     no_progress_turns: int = 8
-    post_green_research_turns: int = 4
-    scope_checkpoint_files: int = 8
-    recovery_failure_grace_turns: int = 0
     recovery_enabled: bool = True
-    post_green_enabled: bool = False
-    scope_checkpoint_enabled: bool = False
     repeated_failure_enabled: bool = False
     wide_failure_enabled: bool = True
     churn_failure_enabled: bool = False
     repeated_command_enabled: bool = False
     blocked_retrieval_enabled: bool = False
-    # Adaptive effort routing starts only after a recent resolved-task window.  If a
-    # medium-effort task reaches that learned envelope without a current green result,
-    # checkpoint the exact thread and resume it at high effort instead of accepting a
-    # quality-risky cheap tail.
-    effort_rescue_enabled: bool = False
-    # Crossing the envelope on a fresh edit is progress, not a spiral.  Let the medium
-    # segment spend a few tool events verifying that edit before paying to rebuild and
-    # resume the thread at high effort.  Long localization with no edit is unaffected.
-    effort_rescue_progress_grace_turns: int = 3
-    resume_effort: str = ""
     nudge_budget: int = 1
     # ---- post-green finalize (codex-native-spiral-v2) ---------------------------
     # The dominant, universal Codex cost sink is NOT thrashing-while-failing (the
@@ -286,16 +256,6 @@ def profile_version(profile: str) -> str:
     return DEFENSIVE_PROFILE_VERSION if profile == "defensive" else PROFILE_VERSION
 
 
-# Which profile the Codex lane runs when an arm does not say otherwise -- the twin of
-# `codex_injection.CODEX_DEFAULT_PROFILE`, and settled the same way. `post-green` is the
-# SHIPPED policy and remains the dataclass default (so a config that predates this constant
-# still means what it meant). `defensive` is what the arms named for the mechanism carry,
-# and what `codex-trimech` co-activates. The shipped policy stays reachable, and named, as
-# `codex-spiral-postgreen`.
-CODEX_DEFAULT_PROFILE = "defensive"
-CODEX_SHIPPED_PROFILE = "post-green"
-
-
 def _normalize(text: str, limit: int = 180) -> str:
     text = (text or "").lower()
     text = re.sub(r"0x[0-9a-f]+", "<hex>", text)
@@ -333,14 +293,6 @@ def is_verification_command(command: str) -> bool:
     return bool(is_python_heredoc and _ASSERT_RE.search(command))
 
 
-def is_research_command(command: str) -> bool:
-    """Whether a post-green command reopens localization rather than wrapping up."""
-    command = command or ""
-    if is_verification_command(command) or _FINALIZATION_COMMAND_RE.search(command):
-        return False
-    return bool(_RESEARCH_COMMAND_RE.search(command))
-
-
 def failure_signatures(output: str) -> set[str]:
     """Extract stable failure identities without retaining source/test contents."""
     found = []
@@ -359,24 +311,10 @@ def failure_signatures(output: str) -> set[str]:
 # `file_change` items altogether: every edit arrives as a `command_execution` whose command
 # is `apply_patch <<'PATCH' ... *** Begin Patch ... *** Update File: <p>`. A controller that
 # only reads `file_change` therefore never sees an edit there, never registers a trustworthy
-# green, and never fires. The paths are read from the patch header lines, and the
-# edit counts when the apply succeeded (the CLI's own "Success." marker, or exit 0).
-_PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$", re.M)
-_GIT_APPLY_RE = re.compile(r"\bgit\s+apply\b")
-_GIT_APPLY_PATH_RE = re.compile(r"^\+\+\+ b/(.+?)\s*$", re.M)
+# green, and never fires. The paths are read from the patch header lines (`patch_paths`, which
+# is `trace.codex.shell_patch_paths`), and the edit counts when the apply succeeded (the CLI's
+# own "Success." marker, or exit 0).
 _PATCH_SUCCESS_RE = re.compile(r"(?i)\bSuccess\.\s*(?:Updated|Applied)")
-
-
-def patch_paths(command: str) -> tuple[str, ...]:
-    """Paths a shell-applied patch command touches, () when it is not one."""
-    command = command or ""
-    if "*** Begin Patch" in command:
-        found = _PATCH_FILE_RE.findall(command)
-    elif _GIT_APPLY_RE.search(command):
-        found = _GIT_APPLY_PATH_RE.findall(command)
-    else:
-        return ()
-    return tuple(dict.fromkeys(p.strip() for p in found if p.strip()))
 
 
 def shell_patch_applied(command: str, output: str, exit_code) -> bool:
@@ -431,44 +369,10 @@ def parse_events(line: str) -> list[CodexEvent]:
     return []
 
 
-def parse_event(line: str) -> Optional[CodexEvent]:
-    """The PRIMARY event of a line (kept for callers that expect one); the command event
-    for a command line even when it also carries an edit -- use ``parse_events`` to see
-    both."""
-    events = parse_events(line)
-    if not events:
-        return None
-    return events[-1]
-
-
-def iter_events(lines: Iterable[str], *, first_thread_only: bool = False):
-    """Yield parsed events, optionally excluding suffixes made by an old restart."""
-    threads = 0
+def iter_events(lines: Iterable[str]):
+    """Yield the parsed events of every line, in order."""
     for line in lines:
-        for event in parse_events(line):
-            if event.kind == "thread":
-                threads += 1
-                if first_thread_only and threads > 1:
-                    return
-            yield event
-
-
-def final_agent_message(lines: Iterable[str]) -> str:
-    """Return the last completed Codex agent message from JSONL text/lines."""
-    if isinstance(lines, str):
-        lines = lines.splitlines()
-    final = ""
-    for line in lines:
-        try:
-            event = json.loads(line)
-        except Exception:
-            continue
-        item = event.get("item") or {}
-        if (event.get("type") == "item.completed"
-                and item.get("type") == "agent_message"
-                and isinstance(item.get("text"), str)):
-            final = item["text"]
-    return final
+        yield from parse_events(line)
 
 
 class CodexSpiralState:
@@ -484,7 +388,6 @@ class CodexSpiralState:
         self.last_progress_turn = 0
         self.last_failed_verification_turn = 0
         self.verification_runs = 0
-        self.post_green_research = 0
         self.failed_verifications_since_green = 0
         self.failed_verifications_after_edit = 0
         self.failure_sigs_since_green = Counter()
@@ -541,7 +444,6 @@ class CodexSpiralState:
             self.last_edit_turn = self.turns
             self.last_progress_turn = self.turns
             self.failed_verifications_after_edit = 0
-            self.post_green_research = 0
             self.green_reruns_since_edit = 0
             for path in event.paths:
                 self.edited_paths[path] += 1
@@ -554,8 +456,6 @@ class CodexSpiralState:
         self.recent_commands.append(_command_fingerprint(command))
         self.recent_blocked.append(bool(_BLOCKED_RE.search(event.output or "")))
         if not is_verification_command(command):
-            if self.currently_green and is_research_command(command):
-                self.post_green_research += 1
             return
         self.verification_runs += 1
         filtered = not green_is_trustworthy(command)
@@ -571,7 +471,6 @@ class CodexSpiralState:
             self.failed_verifications_since_green = 0
             self.failed_verifications_after_edit = 0
             self.failure_sigs_since_green.clear()
-            self.post_green_research = 0
             # Clear outstanding unfiltered failures this UNFILTERED pass actually retired.
             # A filtered green retires nothing (it narrowed the accepted set); an inline
             # reproducer (scopes is None) is not authoritative about a named scope.  A
@@ -595,7 +494,6 @@ class CodexSpiralState:
         if event.exit_code is None:
             return
         self.last_failed_verification_turn = self.turns
-        self.post_green_research = 0
         self.failed_verifications_since_green += 1
         if self.last_edit_turn:
             self.failed_verifications_after_edit += 1
@@ -638,31 +536,8 @@ class CodexSpiralState:
                 int(policy.runaway_floor),
                 int(round(policy.runaway_multiplier * policy.min_tool_turns))):
             return "beyond-twice-the-resolved-envelope"
-        if policy.effort_rescue_enabled and not self.currently_green:
-            grace = max(0, int(policy.effort_rescue_progress_grace_turns))
-            if (self.last_progress_turn
-                    and self.turns - self.last_progress_turn < grace):
-                return None
-            # This rule intentionally also covers long localization with no edit: that
-            # is precisely where continuing indefinitely at reduced effort is riskiest.
-            return "medium-effort-envelope-rescue"
         if not self.edited_paths:
             return None
-        # A verified patch can still accumulate a costly Codex-specific tail when the
-        # model reopens localization instead of finalizing.  Redirect only after several
-        # unmistakably research-oriented commands; ordinary diff/status/lint/test closure
-        # is deliberately excluded from this counter.
-        if policy.post_green_enabled and self.currently_green:
-            if self.post_green_research >= policy.post_green_research_turns:
-                return "validated-patch-reopened-research"
-            return None
-        # Large multi-file ports are a characteristic Codex cost sink.  This is not a
-        # "you are wrong" nudge: it is a one-shot checkpoint asking the same thread to
-        # verify the accumulated patch before expanding it further.  It can therefore
-        # fire before a failure, while the recovery rules below remain failure-gated.
-        if (policy.scope_checkpoint_enabled
-                and self.distinct_edit_files >= policy.scope_checkpoint_files):
-            return "wide-edit-scope-needs-verification"
         if not policy.recovery_enabled:
             return None
         failures = self.failed_verifications_since_green
@@ -670,13 +545,6 @@ class CodexSpiralState:
         latest_patch_failed = self.last_failed_verification_turn > self.last_edit_turn
         if not latest_patch_failed:
             return None
-        # Experimental rules may require a quiet grace window after the newest failure.
-        # Live v1 uses zero here because its prompt is a non-terminal checkpoint reserved
-        # for the much narrower >=15-file condition, not a generic failure intervention.
-        if (self.turns - self.last_failed_verification_turn
-                < policy.recovery_failure_grace_turns):
-            return None
-
         if (policy.repeated_failure_enabled
                 and failures >= policy.min_failed_verifications
                 and self.repeated_failure_count >= policy.repeated_failure_count):
@@ -721,7 +589,6 @@ class CodexSpiralState:
             "repeated_failure_count": self.repeated_failure_count,
             "green_after_edit": self.green_after_edit,
             "currently_green": self.currently_green,
-            "post_green_research": self.post_green_research,
             "verification_runs": self.verification_runs,
             "first_trustworthy_green_turn": self.first_trustworthy_green_turn,
             "last_green_trustworthy": self.last_green_trustworthy,
@@ -747,20 +614,6 @@ def replay_events(events: Iterable[CodexEvent], policy: CodexSpiralPolicy = DEFA
     return decision, state
 
 
-def _percentile(values: list[int], pct: float) -> Optional[float]:
-    if not values:
-        return None
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return float(ordered[0])
-    position = (pct / 100.0) * (len(ordered) - 1)
-    lower = int(position)
-    fraction = position - lower
-    if lower + 1 == len(ordered):
-        return float(ordered[-1])
-    return ordered[lower] + fraction * (ordered[lower + 1] - ordered[lower])
-
-
 class CodexEnvelopeTracker:
     """Online resolved-task envelope measured in the same tool-event unit as live state."""
 
@@ -784,13 +637,6 @@ class CodexEnvelopeTracker:
     def update(self, tool_turns: int, resolved: bool) -> None:
         if resolved and tool_turns:
             self.resolved_tool_turns.append(int(tool_turns))
-
-    def snapshot(self) -> dict:
-        return {
-            "threshold": self.threshold,
-            "resolved_samples": len(self.resolved_tool_turns),
-            "resolved_tool_turns": list(self.resolved_tool_turns),
-        }
 
 
 def nudge_text(reason: str) -> str:
@@ -827,15 +673,6 @@ def nudge_text(reason: str) -> str:
             "then commit to one targeted change and one narrow verification. Do not "
             "restart localization or broaden the search."
         )
-    if reason == "medium-effort-envelope-rescue":
-        return (
-            "Automated effort checkpoint: this task has crossed the recent resolved-task "
-            "tool envelope at medium reasoning effort. Continue this exact thread and "
-            "preserve the working tree; reasoning effort is now high. Inspect the current "
-            "diff and strongest local evidence, commit to the most likely remaining "
-            "hypothesis, and run the narrowest verification that can confirm it. Do not "
-            "restart localization or discard a justified partial patch."
-        )
     if reason == "very-wide-patch-still-failing":
         return (
             "Automated process checkpoint: the current patch spans at least fifteen "
@@ -847,28 +684,9 @@ def nudge_text(reason: str) -> str:
             "and fix the concrete failure. Before finishing, re-read the issue and verify "
             "every affected public entry point."
         )
-    if reason == "wide-edit-scope-needs-verification":
-        return (
-            "Automated process checkpoint: the current patch now spans many files without "
-            "a successful verification after the latest edit. Preserve the current working "
-            "tree and do not restart localization. Pause further scope expansion, inspect "
-            "`git diff --stat`, and run the narrowest relevant verification now. Use that "
-            "result to decide whether every touched file is necessary; continue the same "
-            "implementation if the breadth is justified."
-        )
-    if reason == "validated-patch-reopened-research":
-        return (
-            "Automated process checkpoint: a verification passed after the latest edit, but "
-            "the session has returned to repository research. Preserve the validated patch "
-            "and do not restart localization. Inspect `git diff`, run only the narrowest "
-            "remaining final check needed for confidence, and finish if it stays green. "
-            "Reopen the implementation only if that check exposes a concrete failure."
-        )
     focus = {
         "repeated-failing-verification":
             "The same verification failure is recurring after attempted fixes.",
-        "scattered-edits-still-failing":
-            "The patch has spread across many files and verification is still failing.",
         "edit-churn-still-failing":
             "Repeated edits have not changed the verification outcome.",
         "repeated-command-without-progress":
@@ -886,32 +704,10 @@ def nudge_text(reason: str) -> str:
     )
 
 
-def completion_audit_text(reason: str) -> str:
-    evidence = {
-        "claimed-already-fixed":
-            "The previous response claimed the issue was already fixed but produced no patch.",
-        "empty-patch":
-            "The previous response completed without a source patch.",
-        "latest-verification-failed":
-            "The latest relevant verification still failed after the newest edit.",
-    }[reason]
-    return (
-        COMPLETION_AUDIT_MARKER + "\n"
-        "Automated completion audit: " + evidence + " The current checkout is the "
-        "failing base for this benchmark; preserve any current work and do not assume the "
-        "issue is already fixed. Re-read the issue and `git diff`, produce the smallest "
-        "nonempty source patch, check every affected public entry point or call path, and "
-        "run the narrowest focused reproduction after the latest edit. Do not edit tests. "
-        "This continuation is capped, so prioritize the minimal fix and verification."
-    )
-
-
 class CodexResumeGuard:
     """Live one-shot detector that continues only through native Codex resume."""
 
-    def __init__(self, policy: CodexSpiralPolicy = DEFAULT_POLICY, *, verbose: bool = False,
-                 completion_audit: bool = False,
-                 completion_audit_tool_turns: int = 8):
+    def __init__(self, policy: CodexSpiralPolicy = DEFAULT_POLICY, *, verbose: bool = False):
         self.policy = policy
         self.verbose = verbose
         self.state = CodexSpiralState(policy.recent_window)
@@ -919,13 +715,6 @@ class CodexResumeGuard:
         self.pending_reason: Optional[str] = None
         self.fired_reasons: set[str] = set()   # one nudge per reason per task
         self.events: list[dict] = []
-        self.completion_audit_enabled = bool(completion_audit)
-        self.completion_audit_tool_turns = max(1, int(completion_audit_tool_turns))
-        self.completion_audits_done = 0
-        self.completion_audit_reason: Optional[str] = None
-        self.completion_audit_active = False
-        self.completion_audit_start_turn = 0
-        self.completion_audit_capped = False
 
     def monitor(self, line: str) -> bool:
         events = parse_events(line)
@@ -934,23 +723,6 @@ class CodexResumeGuard:
         for event in events:
             self.state.update(event)
         event = events[-1]
-        if self.completion_audit_active:
-            used = self.state.turns - self.completion_audit_start_turn
-            if (event.kind in ("command", "edit")
-                    and used >= self.completion_audit_tool_turns):
-                self.completion_audit_active = False
-                self.completion_audit_capped = True
-                self.events.append({
-                    "action": "completion-audit-cap",
-                    "reason": self.completion_audit_reason,
-                    "tool_turns": used,
-                    "snapshot": self.state.snapshot(),
-                })
-                if self.verbose:
-                    print(f"  [codex-completion-audit] CAP at {used} tool turns")
-                return True
-            # Do not stack another spiral intervention inside the final audit.
-            return False
         if event.kind == "thread" or self.nudges_done >= self.policy.nudge_budget:
             return False
         reason = self.state.decision(self.policy)
@@ -993,63 +765,11 @@ class CodexResumeGuard:
         reason = self.pending_reason
         self.pending_reason = None
         self.nudges_done += 1
-        request = {
+        return {
             "mode": "resume",
             "session_id": self.state.thread_id,
             "prompt": nudge_text(reason),
         }
-        if self.policy.resume_effort:
-            request["effort"] = self.policy.resume_effort
-        return request
-
-    def completion_continuation(self, patch: str, transcript: str):
-        """Return one deterministic same-thread end-state audit, if warranted."""
-        if (not self.completion_audit_enabled or self.completion_audits_done
-                or not self.state.thread_id):
-            return None
-        patch_empty = not (patch or "").strip()
-        final_message = final_agent_message(transcript)
-        if patch_empty and _NO_CHANGE_CLAIM_RE.search(final_message):
-            reason = "claimed-already-fixed"
-        elif patch_empty:
-            reason = "empty-patch"
-        elif (self.state.last_failed_verification_turn > self.state.last_edit_turn
-              and not self.state.currently_green):
-            reason = "latest-verification-failed"
-        else:
-            return None
-
-        self.completion_audits_done = 1
-        self.completion_audit_reason = reason
-        self.completion_audit_active = True
-        self.completion_audit_start_turn = self.state.turns
-        record = {
-            "action": "completion-audit-resume",
-            "reason": reason,
-            "thread_id": self.state.thread_id,
-            "snapshot": self.state.snapshot(),
-        }
-        self.events.append(record)
-        if self.verbose:
-            print(f"  [codex-completion-audit] RESUME ({reason})")
-        return {
-            "mode": "resume",
-            "session_id": self.state.thread_id,
-            "prompt": completion_audit_text(reason),
-        }
-
-    def finish_completion_audit(self):
-        """Record a naturally completed audit (a capped one already records itself)."""
-        if not self.completion_audit_active:
-            return
-        used = self.state.turns - self.completion_audit_start_turn
-        self.completion_audit_active = False
-        self.events.append({
-            "action": "completion-audit-complete",
-            "reason": self.completion_audit_reason,
-            "tool_turns": used,
-            "snapshot": self.state.snapshot(),
-        })
 
     def telemetry(self) -> dict:
         return {
@@ -1059,10 +779,4 @@ class CodexResumeGuard:
             "snapshot": self.state.snapshot(),
             "thread_id_captured": bool(self.state.thread_id),
             "paid_judge_effective_tokens": 0,
-            "completion_audit_enabled": self.completion_audit_enabled,
-            "completion_audits": self.completion_audits_done,
-            "completion_audit_reason": self.completion_audit_reason,
-            "completion_audit_capped": self.completion_audit_capped,
-            "completion_audit_tool_turn_cap": self.completion_audit_tool_turns,
-            "resume_effort": self.policy.resume_effort or None,
         }

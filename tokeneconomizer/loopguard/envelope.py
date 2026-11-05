@@ -167,7 +167,7 @@ def load_envelope(store, level="default", overrides=None):
 def thresholds(tracker, overrides=None):
     """The thresholds a turn is checked against: the preset, what this repository's history
     learned on top of it, then a person's pinned values (`<name>`), which win."""
-    thr = tracker.thresholds(max_turns=None)
+    thr = tracker.thresholds()
     for key, value in (overrides or {}).items():
         if key not in _ENVELOPE_KEYS:
             thr[key] = value
@@ -191,7 +191,7 @@ def save_envelope(store, tracker):
         "resolved_snaps": tracker.resolved_snaps[-ENVELOPE_HISTORY:]})
 
 
-def record_turn(store, guard, level="default", stopped_normally=True, overrides=None):
+def record_turn(store, guard, level="default", overrides=None):
     """Fold a finished turn into the envelope -- under the store lock, since two sessions in
     one repository share it. Only turns that ended green feed it, as only resolved tasks fed
     the experiments' envelope; a turn's own outcome gates only later turns."""
@@ -199,7 +199,7 @@ def record_turn(store, guard, level="default", stopped_normally=True, overrides=
     # experiments snapshot a resolved task's full trajectory (`spiral_snapshot(transcript)`).
     with store.locked("envelope"):
         tracker = load_envelope(store, level, overrides)
-        tracker.update(guard.cum_turns, guard.resolved_proxy(stopped_normally),
+        tracker.update(guard.cum_turns, guard.resolved_proxy(),
                        snapshot=guard.whole.snapshot())
         save_envelope(store, tracker)
     return tracker

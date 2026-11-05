@@ -1,5 +1,5 @@
-"""Ledger: overhead() and effective_exec()."""
-from tokeneconomizer import ledger
+"""Ledger: overhead(), and the execution cost it is added to (pricing.effective_tokens)."""
+from tokeneconomizer import ledger, pricing
 from tokeneconomizer.ledger import OVERHEAD_KEYS
 
 
@@ -18,13 +18,12 @@ def test_all_overhead_keys_counted():
     assert ledger.overhead(row) == len(OVERHEAD_KEYS)
 
 
-def test_effective_exec_uses_breakdown():
+def test_effective_tokens_uses_breakdown():
     # cache_read weighted at 0.10, output at 5.0 on the Claude curve.
     row = {"input_tokens": 100, "cache_read_input_tokens": 1000,
            "cache_creation_input_tokens": 0, "output_tokens": 10}
-    assert ledger.effective_exec(row) == 100 * 1.0 + 1000 * 0.10 + 10 * 5.0
+    assert pricing.effective_tokens(row) == 100 * 1.0 + 1000 * 0.10 + 10 * 5.0
 
 
-def test_effective_exec_falls_back_to_total():
-    assert ledger.effective_exec({"tokens_total": 777}) == 777
-
+def test_effective_tokens_falls_back_to_total():
+    assert pricing.effective_tokens({"tokens_total": 777}) == 777

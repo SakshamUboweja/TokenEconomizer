@@ -106,6 +106,15 @@ def is_stuck(state, thr=None):
     return churny and noisy and repeating
 
 
+def backstop_for(thr, envelope):
+    """The call count past which a stuck trajectory is stopped: `backstop_turns` when the
+    tracker supplied it, else `backstop_mult` times the envelope, else None (no backstop)."""
+    backstop = thr.get("backstop_turns")
+    if backstop is None and envelope is not None:
+        backstop = envelope * thr["backstop_mult"]
+    return backstop
+
+
 def assess_abort(state, envelope=None, judge=None, thr=None):
     """Decide whether to abort, TRACE-FIRST, as an explicit TWO-TIER cascade. Returns
     (abort: bool, reason: str).
@@ -134,9 +143,7 @@ def assess_abort(state, envelope=None, judge=None, thr=None):
     # `backstop_turns` (learned, cap-aware) is preferred when the tracker supplied it, so
     # the backstop stays REACHABLE under a tight turn cap; else fall back to the
     # multiplier-on-envelope form (the Copilot-scale behavior).
-    backstop_turns = thr.get("backstop_turns")
-    if backstop_turns is None and envelope is not None:
-        backstop_turns = envelope * thr["backstop_mult"]
+    backstop_turns = backstop_for(thr, envelope)
     if (backstop_turns is not None
             and state.turns >= backstop_turns
             and is_stuck(state, thr)):

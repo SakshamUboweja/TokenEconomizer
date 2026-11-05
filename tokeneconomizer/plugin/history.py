@@ -57,7 +57,8 @@ import time
 from .. import loopguard, trace
 from . import fold
 from .hosts import _EXIT_RE, RESULT_CAP, claude_success_code
-from .paths import record_error
+from .paths import record_error, repo_identity
+from .repos import _imported
 
 STATE = fold.HISTORY
 LOG = "history.log"
@@ -75,8 +76,8 @@ def read_state(ctx):
     return doc if isinstance(doc, dict) else None
 
 
-def _num(v, default=0):
-    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else default
+def _num(v):
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
 
 
 def _stale(doc, now):
@@ -107,15 +108,14 @@ def _nothing_folded(store):
 def _live_folds(store):
     """Has a session other than an imported one been folded here?"""
     folded = store.read("folded.json") or {}
-    if any(not (isinstance(v, dict) and v.get("imported")) for v in folded.values()):
+    if any(not _imported(v) for v in folded.values()):
         return True
     return any(not r.get("imported") for r in _session_records(store))
 
 
 def _folded_by_import(store, sid):
     """Is `sid` in `folded.json` as a session this repository's import folded?"""
-    entry = (store.read("folded.json") or {}).get(sid)
-    return isinstance(entry, dict) and bool(entry.get("imported"))
+    return _imported((store.read("folded.json") or {}).get(sid))
 
 
 def _refusal(ctx, resuming):
@@ -135,7 +135,6 @@ def _refusal(ctx, resuming):
 # ---- which logs ------------------------------------------------------------------------------
 def _identity(cwd, env, cache):
     if cwd not in cache:
-        from .paths import repo_identity
         try:
             cache[cwd] = repo_identity(cwd, env).key
         except (OSError, ValueError):
@@ -143,11 +142,10 @@ def _identity(cwd, env, cache):
     return cache[cwd]
 
 
-def is_this_repository(ctx, folder, cwd, cache=None):
+def is_this_repository(ctx, folder, cwd, cache):
     """Is a log filed under `folder` that names `cwd` a session of this repository? Its recorded
     directory decides, keyed as a live session's is; only where that directory is gone, an
     exact match of the folder with the one Claude Code derives from the repository's root."""
-    cache = {} if cache is None else cache
     if cwd and os.path.isdir(cwd):
         return _identity(cwd, ctx.env, cache) == ctx.repo.key
     root = ctx.repo.root
@@ -264,10 +262,10 @@ def replay_envelope(ctx, transcript_path):
 
 
 # ---- the run ---------------------------------------------------------------------------------
-def _update(ctx, change, timeout=10.0):
+def _update(ctx, change):
     """Read-modify-write `history.json` under its own lock; returns the new doc, or None when
     the lock was busy. `change(doc)` returns False to write nothing."""
-    with ctx.store.locked("history", timeout=timeout) as got:
+    with ctx.store.locked("history", timeout=HISTORY_LOCK_S) as got:
         if not got:
             return None
         doc = read_state(ctx) or {}
@@ -290,7 +288,7 @@ def _say(log, text):
             pass
 
 
-def run(ctx, auto=False, now=None, budget_s=BUDGET_S, log=None):
+def run(ctx, auto=False, budget_s=BUDGET_S, log=None):
     """Import this repository's earlier sessions, holding the fold lock throughout.
 
     `auto`: started by a session start, which imports only into a store with nothing folded and
@@ -298,7 +296,7 @@ def run(ctx, auto=False, now=None, budget_s=BUDGET_S, log=None):
     recorded but a store never imported into. Returns {"state", "imported", "skipped",
     "reason"}: state "busy" when the fold lock stayed taken, "refused" when the import may not
     run here."""
-    now = time.time() if now is None else now
+    now = time.time()
     if not getattr(ctx.host, "keeps_history", False):
         return {"state": "refused", "reason": f"{ctx.host.name} keeps no session history "
                                               f"the plugin reads"}
@@ -429,14 +427,14 @@ def _import_one(ctx, doc, item, skipped, log):
 
 
 # ---- what a session start does ---------------------------------------------------------------
-def maybe_start(ctx, now=None):
+def maybe_start(ctx):
     """At a session start: start the import, resume one stopped by its budget, or restart one
     whose process died -- in a detached `te history import` (inline when TE_FOLD_SYNC=1, for
     tests). Reads only `history.json`, and `folded.json` and the ledger (when it is not empty)
     when there is no `history.json` yet. A store with folded sessions records the skip, once."""
     if not getattr(ctx.host, "keeps_history", False):
         return None
-    now = time.time() if now is None else now
+    now = time.time()
     exists = os.path.exists(ctx.store.path(STATE))
     if exists and read_state(ctx) is None:
         return None                     # unreadable: left alone (and it blocks no fold)
@@ -463,7 +461,7 @@ def maybe_start(ctx, now=None):
             return False
         start["go"] = True
         return None
-    if _update(ctx, decide, timeout=HISTORY_LOCK_S) is None or not start:
+    if _update(ctx, decide) is None or not start:
         return None
     if ctx.env.get("TE_FOLD_SYNC") == "1":
         return run(ctx, auto=True)
@@ -483,7 +481,7 @@ def notice(ctx):
         d["noticed"] = True
         out["n"] = int(_num(d.get("imported")))
         return None
-    if _update(ctx, mark, timeout=HISTORY_LOCK_S) is None or not out.get("n"):
+    if _update(ctx, mark) is None or not out.get("n"):
         return None
     return (f"TokenEconomizer read {out['n']} earlier session(s) of {ctx.repo.label} from "
             f"Claude Code's history.")

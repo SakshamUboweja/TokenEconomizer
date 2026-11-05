@@ -268,13 +268,13 @@ def claude_subagent_files(transcript_path):
     return sorted(glob.glob(os.path.join(stem, "subagents", "*.jsonl")))
 
 
-def claude_session_usage(transcript_path, include_subagents=True):
+def claude_session_usage(transcript_path):
     """Token breakdown of a Claude Code session, de-duplicated by assistant message id.
 
     Returns the four breakdown fields `pricing.effective_tokens` reads, plus `model` (the most
-    used one), `requests` (distinct assistant messages carrying usage) and `files` read."""
-    files = [transcript_path] + (claude_subagent_files(transcript_path)
-                                 if include_subagents else [])
+    used one), `requests` (distinct assistant messages carrying usage) and `files` read; the
+    session's subagents are part of it."""
+    files = [transcript_path] + claude_subagent_files(transcript_path)
     by_id, models, anon = {}, {}, 0
     for path in files:
         for ev in _records(path, '"usage"'):
@@ -300,14 +300,12 @@ def claude_session_usage(transcript_path, include_subagents=True):
     return out
 
 
-def claude_tool_usage(transcript_path, include_subagents=True):
-    """{tool: calls} over a session and, by default, its subagents -- a tool a subagent used is
-    in use, and denying it would take it from the subagent too."""
+def claude_tool_usage(transcript_path):
+    """{tool: calls} over a session and its subagents -- a tool a subagent used is in use, and
+    denying it would take it from the subagent too."""
     from .calls import tool_usage
     counts = {}
-    files = [transcript_path] + (claude_subagent_files(transcript_path)
-                                 if include_subagents else [])
-    for path in files:
+    for path in [transcript_path] + claude_subagent_files(transcript_path):
         for name, n in tool_usage(path).items():
             counts[name] = counts.get(name, 0) + n
     return counts

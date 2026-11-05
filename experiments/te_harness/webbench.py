@@ -81,18 +81,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from te_bench import baselines as scaffolds_pkg
 from tokeneconomizer import pricing
-from te_bench.nudge_guard import NudgeGuard
 
 from . import copilot
 from . import codex
-from te_bench import codex_spiral
 
 from .guards import net_guard
 from .swebench import (EFFORT_LEVELS, PROTECTED_TOOLS, _ANTHROPIC_DIRECT, _log,
-                       answer_key_attempts,
+                       answer_key_attempts, network_tool_block,
+                       degraded_row, nudge_guard_for, codex_guard_for,
+                       install_signal_cleanup, copilot_model_and_effort,
+                       copilot_optimizer_call, merge_copilot_segments,
+                       save_copilot_debug_log,
                        _merge_usage, _row_from_result, anthropic_optimizer_call,
                        preflight_optimizer_endpoint, resolve_anthropic_key,
-                       claude_bin, cli_version, guard_accepts,
+                       claude_bin, cli_version,
                        set_optimizer_context, _cell_of, _UsageRecovery,
                        agent_credential_env)
 
@@ -150,18 +152,16 @@ def _cleanup_sessions(*_a):
 
 
 def _install_signal_cleanup():
-    """Shut evaluator sessions down on TERM/INT/HUP, then die of that same signal so the
-    exit status stays honest. No-op off the main thread."""
-    def handler(signum, frame):
-        _cleanup_sessions()
-        signal.signal(signum, signal.SIG_DFL)
-        os.kill(os.getpid(), signum)
+    """Shut evaluator sessions down on TERM/INT/HUP, then die of that same signal."""
+    install_signal_cleanup(_cleanup_sessions)
 
-    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        try:
-            signal.signal(sig, handler)
-        except (ValueError, OSError):
-            pass
+
+def _flat_segment_usage(result):
+    """What is reported back to the Web-Bench evaluator for a segment of an agent that
+    reports usage in flat token fields (Copilot, Codex)."""
+    return {k: (result or {}).get(k) or 0
+            for k in ("input_tokens", "cache_read_input_tokens",
+                      "cache_creation_input_tokens", "output_tokens")}
 
 
 def _session_log_text_host(home):
@@ -271,17 +271,6 @@ def _ignored(rel, globs):
     return False
 
 
-# Tools that reach the public internet. Both benchmarks' answers are ON the public
-# internet -- SWE-bench instances are GitHub issues whose fixing PR and gold patch are a
-# fetch away, and Web-Bench ships every project's grading spec in `bytedance/web-bench`.
-# An agent that can browse is therefore not solving the task, it is retrieving the answer,
-# and the resolve verdict measures nothing.
-#
-# Blocked for EVERY arm, deliberately. Leaving it to the untool mechanism would be worse
-# than useless: untool drops a tool only after observing DISUSE, so precisely the agents
-# that browse keep the ability, and the arms would differ in whether they can cheat.
-# `TE_ALLOW_NETWORK_TOOLS=1` lifts it for a run that genuinely wants a browsing agent.
-#
 # The evaluator's `fetch` aborts a request after undici's default 300s headersTimeout
 # (on node v22.23.2: UND_ERR_HEADERS_TIMEOUT at 300.9s). Past that the
 # evaluator has already hung up, so our answer lands on a closed socket, the attempt is LOST
@@ -310,11 +299,6 @@ def _ignored(rel, globs):
 WEBBENCH_UNDICI_ABORT_DEFAULT_S = 300
 WEBBENCH_TASK_TIMEOUT_HEADROOM_S = 40      # cooperative-cap overshoot (+21s worst) + margin
 WEBBENCH_TASK_TIMEOUT_DEFAULT = 240
-# Names for the STOCK ceiling, kept for callers that import them: the invariant they
-# encode (cap < abort) is the contract, evaluated per run by the two helpers below.
-WEBBENCH_UNDICI_ABORT_S = WEBBENCH_UNDICI_ABORT_DEFAULT_S
-WEBBENCH_TASK_TIMEOUT_MAX = (WEBBENCH_UNDICI_ABORT_DEFAULT_S
-                             - WEBBENCH_TASK_TIMEOUT_HEADROOM_S)
 UNDICI_PRELOAD = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "webbench_undici_preload.mjs")
 
@@ -368,16 +352,6 @@ def webbench_task_timeout(env=None):
              f"TE_WEBBENCH_TASK_TIMEOUT to choose a lower value for this domain.")
         value = cap
     return max(1, value)
-
-
-NETWORK_TOOLS = ("WebSearch", "WebFetch")
-
-
-def network_tool_block():
-    """The network tools to add to `--disallowed-tools`, or () when explicitly allowed."""
-    if os.environ.get("TE_ALLOW_NETWORK_TOOLS", "").strip() in ("1", "true", "yes"):
-        return ()
-    return NETWORK_TOOLS
 
 
 class _AgentHandler(BaseHTTPRequestHandler):
@@ -866,7 +840,7 @@ class WebBenchRunner:
             return subprocess.CompletedProcess([], 0, "", "")
 
         return scaffolds_pkg.ScaffoldContext(
-            profile=self.scaffold_profile_for(home), container=None, task=task,
+            profile=self.scaffold_profile_for(home), task=task,
             run_dir=run_dir_path, exec_=exec_, copy_in=copy_in, host_run=_host,
             read_bytes=None, log=_log)
 
@@ -1028,7 +1002,7 @@ class WebBenchRunner:
                "--effort", self.effort]
         drop = [t for t in (exclude_tools or []) if t not in self.protected_tools]
         # Network tools are dropped for every arm, on top of whatever untool decided --
-        # see NETWORK_TOOLS: the answers to both benchmarks are a fetch away.
+        # see swebench.NETWORK_TOOLS: the answers to both benchmarks are a fetch away.
         drop += [t for t in network_tool_block() if t not in drop]
         if drop:
             cmd += ["--disallowed-tools", ",".join(drop)]
@@ -1430,24 +1404,7 @@ class WebBenchRunner:
 
     def _make_guard(self, run_kwargs):
         """The spiral guard for one rollout, or None when the arm has it switched off."""
-        if not run_kwargs.get("spiral_guard"):
-            return None
-        guard_kwargs = dict(
-            envelope=run_kwargs.get("abort_envelope"),
-            judge=run_kwargs.get("spiral_judge"),
-            thr=run_kwargs.get("spiral_thr"),
-            nudge_budget=int(run_kwargs.get(
-                "spiral_nudge_budget",
-                1 if run_kwargs.get("spiral_nudge") else 0)),
-            nudge_writer=run_kwargs.get("spiral_nudge_writer"),
-            verbose=os.environ.get("TE_VERBOSE", "1") == "1")
-        # `never_abort` is CONSERVATIVE-MODE-ONLY and absent from the vendored guard on
-        # branches without trimech-safe -- see swebench.guard_accepts() for why it is
-        # probed. Passed to a guard that lacks the parameter, it would raise TypeError at
-        # task 0 on every guarded Web-Bench run.
-        if guard_accepts("never_abort"):
-            guard_kwargs["never_abort"] = bool(run_kwargs.get("spiral_never_abort"))
-        return NudgeGuard(**guard_kwargs)
+        return nudge_guard_for(run_kwargs)
 
     def _write_run_config(self, run_dir_path, task, arm, injected, exclude_tools,
                           max_turns, run_kwargs, sess, project):
@@ -1497,13 +1454,9 @@ class WebBenchRunner:
                 "thresholds": run_kwargs.get("spiral_thr"),
                 "judge": run_kwargs.get("spiral_judge") is not None,
                 "nudge_writer_llm": run_kwargs.get("spiral_nudge_writer") is not None,
-                "nudge_budget": run_kwargs.get(
-                    "spiral_nudge_budget",
-                    1 if run_kwargs.get("spiral_nudge") else 0),
-                # applied, not requested: on a guard without the parameter the request
-                # is silently inert, and recording it as true would misdescribe the run.
-                "never_abort": (bool(run_kwargs.get("spiral_never_abort"))
-                                if guard_accepts("never_abort") else False),
+                "nudge_budget": 1 if run_kwargs.get("spiral_nudge") else 0,
+                # the guard has no never-abort mode; recorded so rows keep their shape
+                "never_abort": False,
                 "guard_per_attempt": True,
             },
             "webbench": {
@@ -1617,36 +1570,11 @@ class CopilotWebBenchRunner(WebBenchRunner):
 
     def __init__(self, agent="copilot", model=None, repo=None, scaffold=None):
         self.agent = agent
-        # 'auto' normalises to None: it is a routing directive, not a billable model id,
-        # and recording it as one makes pricing hard-fail at the END of a paid rollout.
-        self.model = copilot.normalize_model(model or os.environ.get("COPILOT_MODEL"))
-        copilot.validate_priceable(self.model, self.agent)
-        # Same rule as the Claude path: the optimizer is the agent's own model, and it is
-        # RECORDED as that model, not as the "agent" label optimizer_call substitutes it
-        # for -- so run_config.json names the cost basis the run actually used.
-        if os.environ.get("TE_OPTIMIZER_MODEL"):
-            raise RuntimeError(
-                "TE_OPTIMIZER_MODEL is no longer honoured: the between-task optimizer "
-                "runs on the agent's own model so mechanism overhead is priced on the "
-                "same basis as the task rows. Unset it.")
+        self.model, self.effort_requested, self.effort = copilot_model_and_effort(
+            model, self.agent)
+        # Recorded as the agent's own model, not as the "agent" label optimizer_call
+        # substitutes it for -- so run_config.json names the cost basis the run used.
         self.optimizer_model = self.model or "auto"
-        self.effort_requested = (os.environ.get("TE_EFFORT_LEVEL")
-                                 or os.environ.get("COPILOT_EFFORT_LEVEL") or "high")
-        if self.effort_requested not in copilot.EFFORT_LEVELS:
-            raise RuntimeError(f"TE_EFFORT_LEVEL={self.effort_requested!r} is not one of "
-                               f"{sorted(copilot.EFFORT_LEVELS)}")
-        # The router model rejects --effort and exits, so effort is only APPLIED when a
-        # model is pinned. Recorded as null otherwise, because on `auto` the effort is
-        # whatever the router chose -- not a controlled part of the cost basis.
-        self.effort = (self.effort_requested
-                       if copilot.effort_applies(self.model) else None)
-        if self.effort is None:
-            why = ("the launcher probed this model and the CLI rejected --effort"
-                   if os.environ.get("TE_EFFORT_APPLIES") == "0"
-                   else "the 'auto' router takes no effort level; pin COPILOT_MODEL "
-                        "to a served model id to control it")
-            _log(f"copilot: TE_EFFORT_LEVEL={self.effort_requested} NOT applied "
-                 f"(model={self.model or 'auto'}, recorded as null) -- {why}.")
         self.copilot = copilot.require_install()      # host-only: no container seed here
         self.agent_bin = self.copilot
         self.protected_tools = copilot.PROTECTED_TOOLS
@@ -1698,15 +1626,7 @@ class CopilotWebBenchRunner(WebBenchRunner):
             remedy="Check COPILOT_PROVIDER_BASE_URL and the credential that goes with it.")
 
     def optimizer_call(self, prompt, model="agent"):
-        if self.optimizer_endpoint:
-            base, key, bearer = self.optimizer_endpoint
-            return anthropic_optimizer_call(
-                prompt, model=model, configured_model=self.optimizer_model,
-                max_tokens=self.optimizer_max_tokens,
-                api_key=key, bearer=bearer, base_url=base)
-        return copilot.optimizer_call(
-            prompt, binary=self.copilot,
-            model=(model if model not in ("agent", "copilot") else self.model))
+        return copilot_optimizer_call(self, prompt, model)
 
     # ---- one streamed agent segment ----------------------------------------------------
     def scaffold_profile_for(self, home):
@@ -1890,45 +1810,21 @@ class CopilotWebBenchRunner(WebBenchRunner):
 
     # ---- accounting hooks ---------------------------------------------------------------
     def _merge_segments(self, a, b):
-        merged = copilot.merge_usage(a, b)
-        merged["_debug_log"] = (a or {}).get("_debug_log", "") + (b or {}).get("_debug_log", "")
-        return merged
+        return merge_copilot_segments(a, b)
 
     def _segment_usage(self, result):
-        return {k: (result or {}).get(k) or 0
-                for k in ("input_tokens", "cache_read_input_tokens",
-                          "cache_creation_input_tokens", "output_tokens")}
+        return _flat_segment_usage(result)
 
     def _row_from_segment(self, result):
-        row = dict(result or {})
-        row.setdefault("is_error", False)
-        row.setdefault("cost_usd_vendor", None)
-        # Same degradation predicate the SWE-bench Copilot runner sets, so one filter
-        # covers every row this harness writes. Copilot needs no _UsageRecovery: it mines
-        # its log dir AFTER the kill, so a guard stop costs it nothing.
-        src = row.get("tokens_source")
-        row["usage_incomplete"] = src is not None and src != "debug_log"
-        row["output_tokens_missing"] = row.get("output_tokens") is None
-        row["num_turns_recovered"] = False
-        if row["usage_incomplete"]:
-            row.setdefault("usage_incomplete_reason", f"tokens_source={src}")
-        return row
+        # The SWE-bench Copilot runner's predicate. Copilot needs no _UsageRecovery: it
+        # mines its log dir AFTER the kill, so a guard stop costs it nothing.
+        return degraded_row(result, "debug_log")
 
     def run_task(self, task, *, arm, injected, exclude_tools, run_dir_path, **run_kwargs):
         row, out_dir = super().run_task(
             task, arm=arm, injected=injected, exclude_tools=exclude_tools,
             run_dir_path=run_dir_path, **run_kwargs)
-        # Same filename SWE-bench writes, so trace.parse_catalog(run_dir, 'copilot') works
-        # identically on both domains -- without it the untooling judge sees empty
-        # descriptions, drops nothing, and still bills for the call.
-        log_text = row.pop("_debug_log", "")
-        if log_text:
-            try:
-                with open(os.path.join(out_dir, "copilot_debug.log"), "w",
-                          encoding="utf-8") as fh:
-                    fh.write(log_text)
-            except OSError as e:
-                _log(f"could not save copilot_debug.log: {e}")
+        save_copilot_debug_log(row, out_dir)
         return row, out_dir
 
 
@@ -1993,7 +1889,14 @@ class CodexWebBenchRunner(WebBenchRunner):
         self.api_key = self.routing["api_key"]
         self.model = model or os.environ.get("CODEX_MODEL", "gpt-5.6-sol")
         codex.validate_priceable(self.model, self.agent)
-        codex.verify_model(self.model, self.routing)
+        # Refuse a lane whose endpoint does not serve the id it intends to bill, exactly as
+        # the SWE-bench Codex lane does.
+        served, why = codex.verify_model(self.model, self.routing)
+        if served is False:
+            raise RuntimeError("codex model check failed: " + why)
+        if served is None:
+            _log(f"codex: {why} -- an unserved id would fail per task, so check "
+                 f"`curl {self.routing['base_url']}/models` by hand before a long run")
         if os.environ.get("TE_OPTIMIZER_MODEL"):
             raise RuntimeError(
                 "TE_OPTIMIZER_MODEL is no longer honoured: the between-task optimizer runs "
@@ -2004,9 +1907,8 @@ class CodexWebBenchRunner(WebBenchRunner):
         if self.effort not in EFFORT_LEVELS:
             raise RuntimeError(f"TE_EFFORT_LEVEL={self.effort!r} is not one of "
                                f"{sorted(EFFORT_LEVELS)}")
-        codex.require_install()
-        self.codex_vendor = codex.codex_vendor()
-        self.agent_bin = codex.codex_bin()
+        # require_install returns (shim, vendor dir); the host lane needs only the shim.
+        self.agent_bin = codex.require_install()[0]
         self.cli_version = codex.cli_version(self.agent_bin)
         self.protected_tools = PROTECTED_TOOLS
         # The captured base prompt the lean-instructions package rewrites. Absent on a CLI
@@ -2261,24 +2163,12 @@ class CodexWebBenchRunner(WebBenchRunner):
 
     def _segment_usage(self, result):
         """What is reported back to the Web-Bench evaluator for this segment."""
-        return {k: (result or {}).get(k) or 0
-                for k in ("input_tokens", "cache_read_input_tokens",
-                          "cache_creation_input_tokens", "output_tokens")}
+        return _flat_segment_usage(result)
 
     def _row_from_segment(self, result):
-        row = dict(result or {})
-        row.setdefault("is_error", False)
-        row.setdefault("cost_usd_vendor", None)
-        # Same degradation predicate as the SWE-bench Codex runner, so one filter covers
-        # every row either domain writes: a stream killed before `turn.completed` takes the
-        # usage block with it, and row_usage reports None (never 0) in every token field.
-        src = row.get("tokens_source")
-        row["usage_incomplete"] = src is not None and src != "stream_usage"
-        row["output_tokens_missing"] = row.get("output_tokens") is None
-        row["num_turns_recovered"] = False
-        if row["usage_incomplete"]:
-            row.setdefault("usage_incomplete_reason", f"tokens_source={src}")
-        return row
+        # The SWE-bench Codex runner's predicate: a stream killed before `turn.completed`
+        # takes the usage block with it.
+        return degraded_row(result, "stream_usage")
 
     # ---- the spiral guard ----------------------------------------------------------------
     def _make_guard(self, run_kwargs):
@@ -2289,11 +2179,7 @@ class CodexWebBenchRunner(WebBenchRunner):
         on `codex_spiral_policy` keeps a Codex lane from silently running the generic guard
         against a stream it cannot parse.
         """
-        policy = run_kwargs.get("codex_spiral_policy")
-        if policy is None:
-            return None
-        return codex_spiral.CodexResumeGuard(
-            policy=policy, verbose=os.environ.get("TE_VERBOSE", "1") == "1")
+        return codex_guard_for(run_kwargs)
 
     # ---- entry point ---------------------------------------------------------------------
     def run_task(self, task, *, arm, injected, exclude_tools, run_dir_path, **run_kwargs):

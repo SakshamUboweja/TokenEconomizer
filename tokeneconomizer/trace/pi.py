@@ -20,14 +20,6 @@ def _pi_entries(path):
     return list(records(path))
 
 
-def pi_session_header(path):
-    """The `session` header line ({id, cwd, version, ...}), {} if absent."""
-    for ev in _pi_entries(path)[:1]:
-        if ev.get("type") == "session":
-            return ev
-    return {}
-
-
 def pi_active_branch(entries):
     """Entries on the path from the last entry (the leaf) back to the root, in order."""
     by_id = {e.get("id"): e for e in entries if e.get("id")}

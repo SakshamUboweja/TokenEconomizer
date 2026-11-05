@@ -51,6 +51,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 
 from .. import trace
 from ..trace.jsonl import parse as parse_jsonl
@@ -59,7 +60,7 @@ from . import accounting
 TIMEOUT_S = 180
 
 
-def _env():
+def sidecall_env():
     return dict(os.environ, TE_SIDECALL="1")
 
 
@@ -72,7 +73,6 @@ def _no_reply(host, out):
     """Note a side call that came back empty, which nothing else would show -- as under
     Copilot's BYOK, which does not pass the provider's variables to the hooks that start it.
     A CLI that said it is not signed in pauses the host's side calls."""
-    import time
     from .paths import state_root
     stderr = getattr(out, "stderr", "") or ""
     # Hermes says why on stdout, with a non-zero exit.
@@ -198,10 +198,9 @@ def _claude_help(cli):
     return _HELP[cli]
 
 
-def claude_flags(cli=None):
+def claude_flags(cli):
     """`--no-session-persistence` when this Claude Code has it: a side call or a measurement is
     not a session of the person's, and should not appear in their history (`claude --resume`)."""
-    cli = cli or claude_cli()
     return ["--no-session-persistence"] if "--no-session-persistence" in _claude_help(cli) else []
 
 
@@ -227,8 +226,8 @@ def claude_call(prompt, model="haiku", cli=None, timeout=TIMEOUT_S):
         cmd = ([cli, "-p", "--output-format", "json", "--max-turns", "1", "--tools", ""]
                + claude_no_mcp(cli, cwd) + ["--model", model or "haiku"] + claude_flags(cli))
         out = subprocess.run(cmd, input=prompt, capture_output=True,
-                             encoding="utf-8", errors="replace", timeout=timeout, env=_env(),
-                             cwd=cwd)
+                             encoding="utf-8", errors="replace", timeout=timeout,
+                             env=sidecall_env(), cwd=cwd)
     try:
         data = json.loads(out.stdout or "{}")
     except ValueError:
@@ -249,7 +248,7 @@ def codex_call(prompt, model="", cli="codex", timeout=TIMEOUT_S):
     cmd.append(prompt)
     with tempfile.TemporaryDirectory(prefix="te-side-", ignore_cleanup_errors=True) as cwd:
         out = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
-                             timeout=timeout, env=_env(), cwd=cwd)
+                             timeout=timeout, env=sidecall_env(), cwd=cwd)
     text, usage = "", None
     for ev in parse_jsonl((out.stdout or "").splitlines()):
         item = ev.get("item") or {}
@@ -297,7 +296,7 @@ def pi_call(prompt, model="", cli="pi", timeout=TIMEOUT_S, extensions=()):
         for extra in (["--no-mcp"], []):
             cmd = [*exe, *PI_FLAGS, *extra, *ext_args, *model_args, "--", prompt]
             out = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
-                                 timeout=timeout, env=_env(), cwd=cwd,
+                                 timeout=timeout, env=sidecall_env(), cwd=cwd,
                                  stdin=subprocess.DEVNULL)
             if "Unknown option: --no-mcp" not in (out.stderr or ""):
                 break
@@ -346,7 +345,7 @@ def opencode_call(prompt, model="", cli="opencode", timeout=TIMEOUT_S):
     model unless `model` names one. The session it creates is deleted afterwards, so it is not
     in their history."""
     model_args = ["--model", model] if model else []
-    env = dict(_env(), OPENCODE_CONFIG_CONTENT=OPENCODE_CONFIG)
+    env = dict(sidecall_env(), OPENCODE_CONFIG_CONTENT=OPENCODE_CONFIG)
     exe = program(cli)
     with tempfile.TemporaryDirectory(prefix="te-side-", ignore_cleanup_errors=True) as cwd:
         out = subprocess.run([*exe, "run", *opencode_flags(cli), "--format", "json",
@@ -382,7 +381,7 @@ def cursor_call(prompt, model="", cli="cursor-agent", timeout=TIMEOUT_S):
             cmd += ["--model", model]
         cmd.append(prompt)
         out = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
-                             timeout=timeout, env=_env(), cwd=cwd, stdin=subprocess.DEVNULL)
+                             timeout=timeout, env=sidecall_env(), cwd=cwd, stdin=subprocess.DEVNULL)
     try:
         data = json.loads(out.stdout or "{}")
     except ValueError:
@@ -424,8 +423,8 @@ def hermes_home(env=None):
     return env.get("HERMES_HOME") or os.path.join(os.path.expanduser("~"), ".hermes")
 
 
-def _hermes_db(env=None):
-    return os.path.join(hermes_home(env), "state.db")
+def _hermes_db():
+    return os.path.join(hermes_home(), "state.db")
 
 
 def _hermes_env():
@@ -453,7 +452,6 @@ def _hermes_charge(session_id, wait_s=None, abandoned=False):
     reply's and the title Hermes generates for it, which may be priced on another model. None
     while the session has not ended or cannot be read: it is then not safe to delete. An
     `abandoned` session will not end, and is read as it stands."""
-    import time
     wait_s = HERMES_TITLE_WAIT_S if wait_s is None else wait_s
     db, deadline = _hermes_db(), time.time() + wait_s
     while True:
@@ -498,7 +496,6 @@ def _hermes_settle(session_id, cli, charged=False, wait_s=None, abandoned=False)
 
 
 def _hermes_defer(session_id, left):
-    import time
     store = _hermes_ledger()
     with store.locked("sidecalls"):
         doc = store.read("sidecalls.json") or {}
@@ -511,7 +508,6 @@ def _hermes_settle_earlier(cli):
     call killed at its timeout may still have been running, and a delete may have failed. One
     with no end by `HERMES_ABANDON_S` later is charged as it stands. A session that is gone, or
     was never readable and is days old, is dropped."""
-    import time
     store = _hermes_ledger()
     with store.locked("sidecalls"):
         doc = store.read("sidecalls.json") or {}
@@ -542,7 +538,6 @@ def hermes_call(prompt, model="", cli=None, timeout=TIMEOUT_S):
     be read yet, as after a timeout, is kept and settled by a later call, so nothing it spent is
     lost and no session is deleted with its usage still in it. A prompt goes by file, since a
     digest can outgrow a command line, and a file is not re-read by a shell on Windows."""
-    import time
     cli = cli or hermes_cli()
     spent = _hermes_settle_earlier(cli)
     model_args = ["--model", model] if model else []
@@ -619,7 +614,7 @@ def copilot_call(prompt, model="", cli="copilot", timeout=TIMEOUT_S):
         cmd += ["--model", model]
     with tempfile.TemporaryDirectory(prefix="te-side-", ignore_cleanup_errors=True) as cwd:
         out = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
-                             timeout=timeout, env=_env(), cwd=cwd, stdin=subprocess.DEVNULL)
+                             timeout=timeout, env=sidecall_env(), cwd=cwd, stdin=subprocess.DEVNULL)
     text, sid = "", None
     for ev in parse_jsonl((out.stdout or "").splitlines()):
         if ev.get("type") == "assistant.message":
@@ -630,7 +625,7 @@ def copilot_call(prompt, model="", cli="copilot", timeout=TIMEOUT_S):
         _no_reply("copilot", out)
     eff = None
     if sid:
-        log = os.path.join(hosts.copilot_home(), "session-state", sid, "events.jsonl")
+        log = hosts.copilot_log(sid)
         hosts.Copilot().settle(log, wait_s=5.0)
         usage = trace.copilot_session_usage(log)
         usage["model"] = usage.get("model") or model or "copilot"

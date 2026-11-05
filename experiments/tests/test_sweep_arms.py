@@ -169,18 +169,11 @@ def test_webbench_scaffold_arms_agree_with_the_harness():
         f"but the harness cannot host {sorted(refused)}")
 
 
-def test_scaffold_arms_agree_with_the_harness_map():
-    """The arm registry and experiments/te_bench/baselines must name the same pairs. Two places
-    map an arm to a scaffold, and a disagreement runs native under a scaffold's name."""
-    from te_bench import baselines as scaffolds
-    assert RX.SCAFFOLD_ARMS == scaffolds.ARM_SCAFFOLDS
-
-
 def test_every_scaffold_arm_names_a_real_scaffold():
     from te_bench import baselines as scaffolds
     for arm, name in RX.SCAFFOLD_ARMS.items():
         assert name in scaffolds.SCAFFOLDS, f"{arm} -> {name}"
-        assert scaffolds.for_arm(arm).name == name
+        assert scaffolds.get(name).name == name
 
 
 def test_scaffold_arms_are_runnable_and_others_carry_none():
@@ -225,7 +218,7 @@ def test_each_domain_plans_one_naive_and_one_full_stack():
 # ---- cell enumeration -------------------------------------------------------------------
 def test_cells_are_the_full_product_seed_major():
     arms, repos, seeds = ["a", "b"], ["r1", "r2", "r3"], [0, 1]
-    got = SP.cells("swebench", arms, repos, seeds)
+    got = SP.cells(arms, repos, seeds)
     assert len(got) == len(arms) * len(repos) * len(seeds)
     assert len(set(got)) == len(got), "no cell may be enumerated twice"
     # seed-major: seed 0 is complete before seed 1 begins, so an interrupted sweep leaves
@@ -371,9 +364,6 @@ def test_the_codex_spiral_arms_have_the_shape_the_injection_arms_have():
     # the generic guard stays off on all of them: the Codex controller is what runs
     for n in ("codex-spiral", "codex-spiral-postgreen", "codex-spiral-defensive"):
         assert S(n).codex_spiral and not S(n).guard and not S(n).nudge
-    from te_bench import codex_spiral as cs
-    assert cs.CODEX_DEFAULT_PROFILE == "defensive"
-    assert cs.CODEX_SHIPPED_PROFILE == "post-green"
 
 
 def test_the_codex_family_relates_to_codex_trimech_as_the_generic_one_does_to_trimech():
@@ -410,7 +400,7 @@ def test_the_codex_family_relates_to_codex_trimech_as_the_generic_one_does_to_tr
 def test_codex_trimech_is_a_paid_arm():
     """The proposer bills, so the endpoint preflight must fire before task 0 rather than
     the first paid call failing 40 tasks into a live lane."""
-    from tokeneconomizer.config import needs_optimizer
+    from te_bench.config import needs_optimizer
     assert needs_optimizer(RX.ARMS["codex-trimech"].cfg()) is True
     assert RX.ARMS["codex-trimech"].cfg().injection.paid is True
 
@@ -531,11 +521,10 @@ def test_the_published_spiral_arm_is_the_defensive_profile():
     """
     from te_bench import codex_spiral as cs
     sp = RX.ARMS["codex-spiral"].cfg().spiral
-    assert sp.codex_spiral_profile == "defensive" == cs.CODEX_DEFAULT_PROFILE
+    assert sp.codex_spiral_profile == "defensive"
     assert cs.profile_version("defensive") == "codex-native-spiral-defensive-v1"
     pol = cs.profile_policy("defensive", 20)
     assert pol.nudge_budget == 2 and pol.runaway_enabled
-    assert not pol.effort_rescue_enabled and not pol.resume_effort
     assert RX.ARMS["codex-spiral-defensive"].cfg().spiral == sp
 
 
@@ -565,8 +554,6 @@ def test_codex_trimech_rtk_is_codex_trimech_with_the_scaffold_and_nothing_else()
     a, b = RX.ARMS["codex-trimech-rtk"], RX.ARMS["codex-trimech"]
     assert a.cfg() == b.cfg() and a.mode == b.mode == "manual4"
     assert a.scaffold == "rtk" and b.scaffold is None
-    from te_bench import baselines
-    assert baselines.ARM_SCAFFOLDS["codex-trimech-rtk"] == "rtk"
     assert RX.SCAFFOLD_ARMS["codex-trimech-rtk"] == "rtk"
     # and the plain scaffold arm is agent-agnostic: no mechanism, just the scaffold
     r = RX.ARMS["rtk"]
@@ -579,8 +566,6 @@ def test_codex_trimech_repomap_is_codex_trimech_with_the_scaffold_and_nothing_el
     a, b = RX.ARMS["codex-trimech-repomap"], RX.ARMS["codex-trimech"]
     assert a.cfg() == b.cfg() and a.mode == b.mode == "manual4"
     assert a.scaffold == "repomap" and b.scaffold is None
-    from te_bench import baselines
-    assert baselines.ARM_SCAFFOLDS["codex-trimech-repomap"] == "repomap"
     assert RX.SCAFFOLD_ARMS["codex-trimech-repomap"] == "repomap"
     r = RX.ARMS["repomap"]
     assert _active(r.cfg()) == set() and r.scaffold == "repomap"
@@ -592,10 +577,9 @@ def test_every_generic_trimech_scaffold_arm_has_exactly_one_codex_sibling():
     generic lane refuses `trimech-serena`, so a `codex-trimech-serena` would be a Codex-only
     combination with no generic twin to compare against. `-web` is Web-Bench's spiral
     tuning of the same scaffold arm, not a scaffold of its own."""
-    from te_bench import baselines
-    generic = {a[len("trimech-"):]: s for a, s in baselines.ARM_SCAFFOLDS.items()
+    generic = {a[len("trimech-"):]: s for a, s in RX.SCAFFOLD_ARMS.items()
                if a.startswith("trimech-") and not a.endswith("-web")}
-    codex = {a[len("codex-trimech-"):]: s for a, s in baselines.ARM_SCAFFOLDS.items()
+    codex = {a[len("codex-trimech-"):]: s for a, s in RX.SCAFFOLD_ARMS.items()
              if a.startswith("codex-trimech-")}
     assert generic == codex == {"rtk": "rtk", "repomap": "repomap"}
 
@@ -605,7 +589,7 @@ def test_the_llm_free_arm_is_registered_and_makes_no_paid_call():
     with no proposer. (The DEFAULT Codex injection arm has carried the paid proposer on top
     since 2026-09-12 -- see test_envfacts_profiles.py.)"""
     from te_bench.arms import ARMS
-    from tokeneconomizer.config import EconomizerConfig, InjectionConfig, needs_optimizer
+    from te_bench.config import EconomizerConfig, InjectionConfig, needs_optimizer
     cfg = ARMS["codex-inject-envfacts"].cfg()
     assert cfg.injection.enabled and cfg.injection.profile == "envfacts"
     assert cfg.injection.paid is False

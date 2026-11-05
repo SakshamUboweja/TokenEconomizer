@@ -98,7 +98,5 @@ def run_job(ctx, session_id, job_id):
 
 
 def spawn_job(ctx, session_id, job_id):
-    """Run a judge job detached (inline when TE_JUDGE_SYNC=1, for tests)."""
-    if ctx.env.get("TE_JUDGE_SYNC") == "1":
-        return run_job(ctx, session_id, job_id)
+    """Run a judge job detached."""
     return ctx.spawn(["judge", "--session", session_id, "--job", job_id], "judge.log")

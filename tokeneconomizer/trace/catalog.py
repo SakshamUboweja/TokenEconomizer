@@ -72,13 +72,17 @@ def parse_tool_catalog_flat(debug_log_text):
     return out
 
 
-def parse_tool_catalog(debug_log_text, max_desc=200):
+# A tool's description is cut to this many characters: enough for the judge to tell tools apart.
+_MAX_DESC = 200
+
+
+def parse_tool_catalog(debug_log_text):
     """Extract {tool_name: short_description} from a saved copilot debug log. Works on
     the JSON-in-JSON escaped payload (the tool schemas the model is sent). Agent-agnostic
     in spirit: any agent whose log carries name/description tool defs parses the same.
 
     Schema-only by design: the flat name:fingerprint catalog is a SEPARATE source
-    (`parse_tool_catalog_flat`), and `trace.catalog_sources` tries both and picks the
+    (`parse_tool_catalog_flat`), and `catalog_sources` tries both and picks the
     richest. Folding the fallback in here would make the winning source unreportable --
     a run using the flat catalog would still claim it had parsed schemas."""
     if not debug_log_text:
@@ -89,7 +93,7 @@ def parse_tool_catalog(debug_log_text, max_desc=200):
         name = m.group(1)
         if name in out:
             continue
-        desc = s[m.end():m.end() + max_desc + 40].split('\n')[0][:max_desc]
+        desc = s[m.end():m.end() + _MAX_DESC + 40].split('\n')[0][:_MAX_DESC]
         out[name] = desc
     return out
 
@@ -101,16 +105,15 @@ _CLAUDE_CATALOG_SNAPSHOT = os.path.join(os.path.dirname(__file__),
                                         "claude_tool_catalog.json")
 
 
-def _load_claude_catalog_snapshot(path=None):
-    p = path or _CLAUDE_CATALOG_SNAPSHOT
+def _load_claude_catalog_snapshot():
     try:
-        with open(p, encoding="utf-8") as f:
+        with open(_CLAUDE_CATALOG_SNAPSHOT, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return {}
 
 
-def parse_tool_catalog_claude(transcript_text, max_desc=200, snapshot=None):
+def parse_tool_catalog_claude(transcript_text):
     """Extract {tool_name: short_description} for a Claude Code run. Reads the loaded
     tool NAMES from the transcript's `system` init event and joins them to the
     description snapshot (claude_tool_catalog.json). Names present in the transcript
@@ -119,13 +122,13 @@ def parse_tool_catalog_claude(transcript_text, max_desc=200, snapshot=None):
     catalog reflects what the agent was actually sent. Returns {} if no system event."""
     if not transcript_text:
         return {}
-    snap = snapshot if snapshot is not None else _load_claude_catalog_snapshot()
+    snap = _load_claude_catalog_snapshot()
     names = []
     for ev in parse(transcript_text.splitlines(), '"system"'):
         if ev.get("type") == "system" and isinstance(ev.get("tools"), list):
             names = ev["tools"]
             break
-    return {n: (snap.get(n, "") or "")[:max_desc] for n in names}
+    return {n: (snap.get(n, "") or "")[:_MAX_DESC] for n in names}
 
 
 def _read(path):

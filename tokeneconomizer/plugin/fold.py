@@ -27,7 +27,6 @@ import time
 from .. import trace
 from . import accounting, denylist, sidecall
 from . import adapter as live_adapter
-from .adapter import LiveAdapter, load_catalog
 from .hosts import FoldLater
 
 STALE_S = 600          # an unfolded session whose transcript is quiet this long is over
@@ -81,7 +80,7 @@ def _fold_microskills(ctx, adapter, run_dir, session_id, injected=None, imported
               if icfg.paid and not imported and not sidecall.paused(ctx.host.name, ctx.root)
               else None)
     stage = PrefixStage(icfg, ctx.repo.label, ctx.mech_dir, False, runner=runner,
-                        optimizer_model="agent", adapter=adapter, agent=ctx.host.name)
+                        optimizer_model="agent", adapter=adapter)
     srow = {"resolved": None}
     task = {"instance_id": session_id}
     if injected is not None:
@@ -143,8 +142,8 @@ def _fold_toolprune(ctx, adapter, run_dir, session_id, transcript=None, workdir=
                       (st.get("prompt_streaks") or stage.tool_unused_streaks).items()}
     stage.catalog_tools = set(st.get("catalog_tools", []))
     stage.catalog_desc = dict(st.get("catalog_desc") or {})
-    applied = denylist.applied_for(ctx.store, ctx.repo.root, ctx.host.name)
-    kept = set(denylist.kept_for(ctx.store, ctx.repo.root, ctx.host.name))   # given back
+    applied = denylist.applied_for(ctx.store, ctx.repo.root, host)
+    kept = set(denylist.kept_for(ctx.store, ctx.repo.root, host))   # given back
     # The mask this session actually ran under: none, for one from before the plugin.
     stage._exclude_tools = [] if imported else list(applied)
     # A tool that has since become protected (the web tools, from this version on) comes back:
@@ -159,7 +158,7 @@ def _fold_toolprune(ctx, adapter, run_dir, session_id, transcript=None, workdir=
         except RuntimeError:            # an unreadable or redirected settings file: leave it
             restored = []
     if restored:
-        applied = denylist.applied_for(ctx.store, ctx.repo.root, ctx.host.name)
+        applied = denylist.applied_for(ctx.store, ctx.repo.root, host)
     # The stage warns once per STREAM when no catalog parses -- a harness defect signal there.
     # Here a stage lives for one fold, and a session that called no tool legitimately has no
     # observed catalog; the source (or its absence) is recorded in untool.json instead.
@@ -415,7 +414,7 @@ def import_blocks(ctx):
     return isinstance(doc, dict) and doc.get("state") in HISTORY_BLOCKING
 
 
-def fold_session(ctx, session_id, transcript_path=None):
+def fold_session(ctx, session_id):
     """Fold one finished session. Returns the ledger record, or None if already folded -- or
     if it is left for later: the fold lock stayed busy, or an import of earlier sessions is
     under way (the session stays pending, and the import folds it once it is done, else the
@@ -426,7 +425,7 @@ def fold_session(ctx, session_id, transcript_path=None):
     with ctx.store.locked("fold", timeout=FOLD_LOCK_WAIT_S) as got:
         if not got or import_blocks(ctx):
             return None
-        return fold_locked(ctx, session_id, transcript_path)
+        return fold_locked(ctx, session_id)
 
 
 def fold_locked(ctx, session_id, transcript_path=None, imported=False, span=None):
@@ -469,9 +468,9 @@ def fold_locked(ctx, session_id, transcript_path=None, imported=False, span=None
             run_dir = _run_dir(workdir, trace_path)
             # An earlier session is scored against the tools its own log shows (used, listed),
             # never today's catalog: a tool installed since would count as unused in it.
-            catalog = {} if imported else load_catalog(ctx.root, ctx.host.name)
-            adapter = LiveAdapter(ctx.host, ctx.repo.root, vocabulary=ctx.config.vocabulary,
-                                  catalog=catalog, protect=ctx.config.toolprune_protect)
+            catalog = {} if imported else live_adapter.load_catalog(ctx.root, ctx.host.name)
+            adapter = live_adapter.LiveAdapter(ctx.host, ctx.repo.root,
+                                               vocabulary=ctx.config.vocabulary, catalog=catalog, protect=ctx.config.toolprune_protect)
             with ctx.store.locked("mechanisms"):
                 inj = _fold_microskills(ctx, adapter, run_dir, session_id,
                                         injected=sess.get("injected_ids"), imported=imported)
@@ -518,7 +517,7 @@ def fold_locked(ctx, session_id, transcript_path=None, imported=False, span=None
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def pending_sessions(ctx, exclude=(), stale_s=STALE_S, now=None):
+def pending_sessions(ctx, exclude=(), now=None):
     """Recorded sessions that ended (or went quiet) without being folded."""
     now = now or time.time()
     folded = ctx.store.read("folded.json") or {}
@@ -535,7 +534,7 @@ def pending_sessions(ctx, exclude=(), stale_s=STALE_S, now=None):
         sess = ctx.store.read(os.path.join("sessions", name)) or {}
         tp = sess.get("transcript") or ""
         try:
-            quiet = now - ctx.host.last_active(tp, sess) >= stale_s
+            quiet = now - ctx.host.last_active(tp, sess) >= STALE_S
         except OSError:
             quiet = False
         if sess.get("ended") or quiet:

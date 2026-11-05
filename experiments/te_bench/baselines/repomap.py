@@ -28,14 +28,13 @@ import subprocess
 import sys
 import tarfile
 
-import tokeneconomizer.plugin
+# The generator and the identifier heuristic live in the core package: the plugin's opt-in
+# repository map runs the same ones.
+from tokeneconomizer.plugin.repomap import GEN, prompt_idents as extract_idents
 
 from .base import Scaffold, ScaffoldError
 
 DEFAULT_MAP_TOKENS = 2048
-# The generator lives in the core package: the plugin's opt-in repository map runs it too.
-GEN = os.path.join(os.path.dirname(os.path.abspath(tokeneconomizer.plugin.__file__)),
-                   "repomap_gen.py")
 
 HEADER = ("# Repository map\n"
           "Ranked key files and symbols (signatures only) for this repository. Consult "
@@ -44,19 +43,6 @@ HEADER = ("# Repository map\n"
 
 def map_tokens():
     return int(os.environ.get("TE_REPOMAP_TOKENS", DEFAULT_MAP_TOKENS))
-
-
-def extract_idents(text):
-    """Heuristic identifiers from the issue body, used to personalize the ranking.
-
-    Reads ONLY the issue text the agent is given, so there is no gold-patch leakage: the
-    map is ranked toward names the agent could have extracted itself.
-    """
-    import re
-    ids = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_.]*)`", text or ""))
-    ids |= set(re.findall(r"\b([a-z_][a-z0-9_]*_[a-z0-9_]+)\b", text or ""))
-    ids |= set(re.findall(r"\b([A-Z][a-zA-Z0-9]+[A-Z][a-zA-Z0-9]*)\b", text or ""))
-    return sorted({i.split(".")[-1] for i in ids if len(i) > 2})[:60]
 
 
 class RepoMapScaffold(Scaffold):
@@ -123,6 +109,8 @@ class RepoMapScaffold(Scaffold):
         return res.stdout, ""
 
     def setup(self, ctx):
+        # Only the issue text the agent is given is read, so nothing leaks from the gold patch:
+        # the map is ranked toward names the agent could have extracted itself.
         idents = extract_idents(ctx.task.get("problem_statement", ""))
         notes = {"arm_setup": "repomap", "n_idents": len(idents),
                  "map_tokens_budget": map_tokens()}

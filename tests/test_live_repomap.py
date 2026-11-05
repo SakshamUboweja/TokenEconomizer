@@ -32,8 +32,7 @@ def _fake(tmp_path, probe=0, slow=0):
 
 
 def _env(env, tmp_path, mode="on", **kw):
-    e = dict(env, TE_REPOMAP=mode, TE_REPOMAP_PYTHON=_fake(tmp_path, **kw))
-    return e
+    return dict(env, TE_REPOMAP=mode, TE_REPOMAP_PYTHON=_fake(tmp_path, **kw))
 
 
 def _session(e, repo, sid, prompts, host=None):

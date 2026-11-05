@@ -43,12 +43,8 @@ const truthy = (v: string | undefined) => ["1", "true", "yes", "on"].includes((v
 /** The program and arguments that run a launcher. The launchers are POSIX `sh`, which Windows
  * cannot start; there the bootstrap they run is started with Python itself (`TE_PYTHON`, else
  * `python`). */
-export function launch(
-  script: string,
-  args: string[],
-  platform: string = process.platform,
-): [string, string[]] {
-  if (platform !== "win32") return [join(SCRIPTS, script), args];
+function launch(script: string, args: string[]): [string, string[]] {
+  if (process.platform !== "win32") return [join(SCRIPTS, script), args];
   const mode = script === "te-hook" ? "hook" : "cli";
   return [process.env.TE_PYTHON || "python", [join(SCRIPTS, "te_bootstrap.py"), mode, ...args]];
 }

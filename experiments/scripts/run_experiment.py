@@ -62,7 +62,6 @@ adapters + harness separately read the dataset roots (_WEBBENCH_PROJECTS / _CRED
 _REPOSVUL_ROOT). See README.md. The results root is git-ignored.
 """
 import argparse
-import collections
 import importlib
 import inspect
 import json
@@ -76,9 +75,8 @@ sys.path[:0] = [os.path.dirname(os.path.abspath(__file__)),  # _env, sweep_plan
                 os.path.dirname(_EXPERIMENTS)]              # the core, at the repository root
 from _env import load_env                                           # noqa: E402
 from te_bench.facade import Economizer                              # noqa: E402
-from tokeneconomizer import EconomizerConfig                        # noqa: E402
+from te_bench.config import needs_optimizer                         # noqa: E402
 from tokeneconomizer import ledger                                  # noqa: E402
-from tokeneconomizer.config import needs_optimizer               # noqa: E402
 
 
 # ---- arm registry ------------------------------------------------------------------------
@@ -90,11 +88,7 @@ from tokeneconomizer.config import needs_optimizer               # noqa: E402
 #                                       integrations (siblings of trimech), codex-*
 #   experiments/te_bench/baselines/arms.py   rtk / serena / repomap -- external tool only
 #   experiments/te_bench/arms.py             assembles both in canonical order
-#
-# `Arm`, `cfg` and `arm` come from te_bench._armspec; `_cfg`/`_arm` remain as aliases
-# because tests and older callers refer to them by those names.
 from te_bench.arms import ARMS, SCAFFOLD_ARMS                # noqa: E402,F401
-from te_bench._armspec import Arm, arm as _arm, cfg as _cfg  # noqa: E402,F401
 
 
 # ---- built-in offline StubRunner (smoke test only) ---------------------------------------

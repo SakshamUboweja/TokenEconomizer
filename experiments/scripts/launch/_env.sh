@@ -427,3 +427,12 @@ te_check_copilot_model() {
   echo "[env] copilot model '$model' serves; effort=${effort:-<unset>} accepted"
 
 }
+
+# te_cell_rows <arm> <repo> <seed> -- how many row.json files that cell already holds under
+# the caller's $DEST. The launchers compare it with the group size to skip finished cells.
+te_cell_rows() {
+  local tag="${2##*/}"; tag="${tag//-/_}"
+  local dir="$DEST/$1/${tag}_s$3"
+  [[ -d "$dir" ]] || { echo 0; return; }
+  find "$dir" -name row.json 2>/dev/null | wc -l
+}

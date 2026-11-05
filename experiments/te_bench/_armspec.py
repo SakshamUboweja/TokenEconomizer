@@ -28,7 +28,7 @@ meet, and the only place an arm name maps to either.
 """
 import collections
 
-from tokeneconomizer.config import EconomizerConfig, InjectionConfig, ToolingConfig, SpiralConfig
+from .config import EconomizerConfig, InjectionConfig, ToolingConfig, SpiralConfig
 
 __all__ = ["Arm", "cfg", "arm"]
 
