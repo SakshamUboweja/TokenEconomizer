@@ -33,7 +33,8 @@ import time
 from ..names import repo_filename
 from . import hosts as hosts_mod
 from .paths import (BY_PATH, BY_REMOTE, RepoId, _slug, digest, home_dir, is_git_entry,
-                    normalize_remote, origin_url, record_error, repo_identity, state_root)
+                    normalize_remote, origin_url, record_error, repo_identity, state_root,
+                    write_atomic)
 from .store import Store
 
 INDEX = "index.json"
@@ -242,13 +243,7 @@ def note_repo(root, repo):
 
 # ---- moving sessions between state directories -----------------------------------------------
 def _write_lines(st, name, records):
-    target = st.path(name)
-    os.makedirs(os.path.dirname(target), exist_ok=True)
-    tmp = f"{target}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        for r in records:
-            fh.write(json.dumps(r, sort_keys=True) + "\n")
-    os.replace(tmp, target)
+    write_atomic(st.path(name), "".join(json.dumps(r, sort_keys=True) + "\n" for r in records))
 
 
 def _rename_label(mech_dir, label):
