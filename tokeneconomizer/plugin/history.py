@@ -53,11 +53,11 @@ the turns that ended green seed the repository's envelope (`replay_envelope`).
 """
 import os
 import time
-import traceback
 
 from .. import loopguard, trace
 from . import fold
 from .hosts import _EXIT_RE, RESULT_CAP, claude_success_code
+from .paths import record_error
 
 STATE = fold.HISTORY
 LOG = "history.log"
@@ -67,16 +67,6 @@ MAX_BYTES = 256 * 1024 * 1024      # a log larger than this is not read
 HISTORY_LOCK_S = 1.0               # a session start's wait for `history.json` (then next time)
 MAX_ATTEMPTS = 2                   # runs that died on one session before it is left out
 _clock = time.monotonic            # the run's budget clock
-
-
-def _record_error(root):
-    try:
-        os.makedirs(root, exist_ok=True)
-        with open(os.path.join(root, "errors.log"), "a", encoding="utf-8") as fh:
-            fh.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')} pid={os.getpid()} (history)\n")
-            fh.write(traceback.format_exc())
-    except Exception:
-        pass
 
 
 def read_state(ctx):
@@ -338,7 +328,7 @@ def run(ctx, auto=False, now=None, budget_s=BUDGET_S, log=None):
             return _run_locked(ctx, doc, resuming, now, budget_s, log)
         except Exception:
             # Not left `running`: live folds would wait for a run that fails again each time.
-            _record_error(ctx.root)
+            record_error(ctx.root, "history")
             doc = read_state(ctx) or {}
             doc.update(state="stopped", reason="the import failed (see errors.log)",
                        at=time.time())
@@ -386,7 +376,7 @@ def _run_locked(ctx, doc, resuming, now, budget_s, log):
             try:
                 fold.fold_locked(ctx, sid)
             except Exception:
-                _record_error(ctx.root)
+                record_error(ctx.root, "history")
     return {"state": doc["state"], "imported": doc.get("imported", 0),
             "skipped": dict(skipped), "over_limit": doc.get("over_limit", 0),
             "left": len(items) - i, "reason": None}
@@ -411,7 +401,7 @@ def _import_one(ctx, doc, item, skipped, log):
             try:
                 replay_envelope(ctx, item["path"])
             except Exception:
-                _record_error(ctx.root)
+                record_error(ctx.root, "history")
         return
     if why:
         skipped[why] = skipped.get(why, 0) + 1
@@ -429,12 +419,12 @@ def _import_one(ctx, doc, item, skipped, log):
             try:
                 replay_envelope(ctx, item["path"])
             except Exception:
-                _record_error(ctx.root)
+                record_error(ctx.root, "history")
             _say(log, f"read {sid}")
         elif rec is not None:
             skipped["unreadable"] = skipped.get("unreadable", 0) + 1
     except Exception:
-        _record_error(ctx.root)
+        record_error(ctx.root, "history")
         skipped["error"] = skipped.get("error", 0) + 1
 
 

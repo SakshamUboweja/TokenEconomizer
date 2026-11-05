@@ -29,12 +29,11 @@ import os
 import re
 import shutil
 import time
-import traceback
 
 from ..names import repo_filename
 from . import hosts as hosts_mod
 from .paths import (BY_PATH, BY_REMOTE, RepoId, _slug, digest, home_dir, is_git_entry,
-                    normalize_remote, origin_url, repo_identity, state_root)
+                    normalize_remote, origin_url, record_error, repo_identity, state_root)
 from .store import Store
 
 INDEX = "index.json"
@@ -54,16 +53,6 @@ def repos_dir(root):
 
 def _repo_dir(root, key):
     return os.path.join(repos_dir(root), key)
-
-
-def _record_error(root):
-    try:
-        os.makedirs(root, exist_ok=True)
-        with open(os.path.join(root, "errors.log"), "a", encoding="utf-8") as fh:
-            fh.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')} pid={os.getpid()} (repos)\n")
-            fh.write(traceback.format_exc())
-    except Exception:
-        pass
 
 
 # ---- session pins ---------------------------------------------------------------------------
@@ -763,7 +752,7 @@ def refold_moved(done, env=None):
             ctx = LiveContext.build(hosts_mod.HOSTS[host](), cwd, env)
             fold.spawn_fold(ctx, fold.pending_sessions(ctx))
         except Exception:
-            _record_error(state_root(env))
+            record_error(state_root(env), "repos")
 
 
 def settle(root, host, repo, cwd, env=None, session_id=None):
@@ -774,7 +763,7 @@ def settle(root, host, repo, cwd, env=None, session_id=None):
     try:
         moved = adopt(root, repo, env)
     except Exception:
-        _record_error(root)
+        record_error(root, "repos")
     if session_id:
         pin(root, host, session_id, repo, cwd)
     return any(r.get("moves") for r in moved)
