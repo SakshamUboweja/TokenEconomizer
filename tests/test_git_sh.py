@@ -7,8 +7,7 @@ import re
 from tests import conftest
 from tests.conftest import git_sh
 
-TESTS = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(TESTS)
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _which(found):
@@ -47,8 +46,10 @@ def test_no_test_runs_a_bare_sh():
     """A command list that starts with a literal "sh" fails on a Windows runner whose PATH has
     no `sh`; the tests take `git_sh()` instead."""
     bare = re.compile(r"""\[\s*["']sh["']""")
-    found = [f"{os.path.relpath(path, REPO)}:{n}"
-             for path in glob.glob(os.path.join(REPO, "tests", "**", "*.py"), recursive=True)
-             + glob.glob(os.path.join(REPO, "experiments", "tests", "**", "*.py"), recursive=True)
-             for n, line in enumerate(open(path, encoding="utf-8"), 1) if bare.search(line)]
+    found = []
+    for tree in ("tests", os.path.join("experiments", "tests")):
+        for path in glob.glob(os.path.join(REPO, tree, "**", "*.py"), recursive=True):
+            with open(path, encoding="utf-8") as fh:
+                found += [f"{os.path.relpath(path, REPO)}:{n}"
+                          for n, line in enumerate(fh, 1) if bare.search(line)]
     assert not found, found
