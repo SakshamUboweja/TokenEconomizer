@@ -21,10 +21,9 @@ import re
 import shlex
 import time
 
-from .rules import DEFAULT_THRESHOLDS, assess_abort, is_stuck, nudge_text
-from .shell_edits import (_split_heredocs, fold_shell_edits, shell_edit_targets,
-                          shell_revert_targets)
-from .state import ERR_RE, TEST_RUN_RE, SpiralState, canon_tool
+from .rules import DEFAULT_THRESHOLDS, assess_abort, backstop_for, is_stuck, nudge_text
+from .shell_edits import _split_heredocs, fold_shell_edits, shell_edits_and_reverts
+from .state import EDIT_TOOLS, ERR_RE, TEST_RUN_RE, SpiralState, canon_tool
 
 _SLOTS = SpiralState.__slots__
 
@@ -203,9 +202,6 @@ def runner_verdict(text):
     return False if _RUN_PASSED_RE.search(text) else None
 
 
-_EDIT = {"edit", "create"}
-
-
 def state_to_dict(st):
     return {k: getattr(st, k) for k in _SLOTS}
 
@@ -237,12 +233,9 @@ class TurnGuard:
         self.nudges_done = int(d.get("nudges_done", 0))
         self.aborted = bool(d.get("aborted", False))
         self.abort_delivered = bool(d.get("abort_delivered", False))
-        self.events = list(d.get("events", []))
         self.judge_last = int(d.get("judge_last", -999))
         self.judge_gap = int(d.get("judge_gap", self.JUDGE_BASE_GAP))
         self.judge_calls = int(d.get("judge_calls", 0))
-        self.judge_tokens = float(d.get("judge_tokens", 0) or 0)
-        self.writer_tokens = float(d.get("writer_tokens", 0) or 0)
         self.last_edit = int(d.get("last_edit", 0))
         self.last_verify = int(d.get("last_verify", 0))
         self.last_verify_failed = bool(d.get("last_verify_failed", False))
@@ -256,23 +249,19 @@ class TurnGuard:
                 "whole": state_to_dict(self.whole),
                 "cum_turns": self.cum_turns, "segment": self.segment,
                 "nudges_done": self.nudges_done, "aborted": self.aborted,
-                "abort_delivered": self.abort_delivered, "events": self.events[-20:],
+                "abort_delivered": self.abort_delivered,
                 "judge_last": self.judge_last, "judge_gap": self.judge_gap,
-                "judge_calls": self.judge_calls, "judge_tokens": self.judge_tokens,
-                "writer_tokens": self.writer_tokens, "last_edit": self.last_edit,
+                "judge_calls": self.judge_calls, "last_edit": self.last_edit,
                 "last_verify": self.last_verify, "last_verify_failed": self.last_verify_failed,
                 "edits": self.edits, "verifications": self.verifications,
                 "judge_pending": self.judge_pending, "nudge_ready": self.nudge_ready}
 
     # ---- outcome tracking for the ended-green proxy ----------------------------------
-    def _track(self, name, args, result, exit_code, shell_edits=()):
-        canon = canon_tool(name)
-        if canon in _EDIT:
+    def _track(self, canon, verifies, result, exit_code, shell_edits):
+        if canon in EDIT_TOOLS:
             self.last_edit = self.cum_turns
             self.edits += 1
             return
-        cmd = (args or {}).get("command") if canon == "bash" else None
-        verifies = status_of_tests(cmd) is not None
         if shell_edits:
             # `sed -i ... && pytest`: the edit comes first, so the run verifies it.
             self.last_edit = self.cum_turns - (1 if verifies else 0)
@@ -319,27 +308,11 @@ class TurnGuard:
         else:
             self.judge_gap = self.JUDGE_BASE_GAP
 
-    def _sampled(self, judge):
-        def call(digest):
-            if self.st.turns - self.judge_last < self.judge_gap:
-                return None
-            self.judge_last = self.st.turns
-            self.judge_calls += 1
-            try:
-                v = judge(self.live_digest(digest))
-            except Exception:
-                v = None
-            if v:
-                self.judge_tokens += v.get("_tokens") or 0
-            self._backoff(v)
-            return v
-        return call
-
     def _background(self, judge):
-        """`_sampled` for a judge that runs in the background (`plugin.judge.AsyncJudge`):
-        a verdict is taken whenever one has come back, a new job starts under the same rate
-        limit, and while one is out the judge answers nothing -- which `assess_abort` reads as
-        throttled, the same as a call the rate limit skipped."""
+        """The judge, run in the background (`plugin.judge.AsyncJudge`): a verdict is taken
+        whenever one has come back, a new job starts under the same rate limit, and while one is
+        out the judge answers nothing -- which `assess_abort` reads as throttled, the same as a
+        call the rate limit skipped."""
         def call(digest):
             found, v = judge.poll(self)
             if found:
@@ -369,12 +342,13 @@ class TurnGuard:
 
         The body is `NudgeGuard.monitor` for a single completed call."""
         thr = thr or DEFAULT_THRESHOLDS
-        cmd = (args or {}).get("command") if canon_tool(name) == "bash" else None
-        shell_edits = shell_edit_targets(cmd) if cmd is not None else []
+        canon = canon_tool(name)
+        cmd = (args or {}).get("command") if canon == "bash" else None
+        shell_edits, reverted = shell_edits_and_reverts(cmd) if cmd is not None else ([], [])
         if shell_edits:
             # A file put back with `git checkout --` or `git restore` is an edit only when this
             # turn edited it: putting back what a dev server keeps regenerating is not churn.
-            reverted = set(shell_revert_targets(cmd))
+            reverted = set(reverted)
             shell_edits = [b for b in shell_edits
                            if b not in reverted or self.whole.edit_counts.get(b)]
         status = status_of_tests(cmd)
@@ -396,13 +370,11 @@ class TurnGuard:
         fold_shell_edits(self.st, shell_edits)
         fold_shell_edits(self.whole, shell_edits)
         self.cum_turns += 1
-        self._track(name, args, result, exit_code, shell_edits)
+        self._track(canon, status is not None, result, exit_code, shell_edits)
         if self.aborted:
             return None
 
-        backstop = thr.get("backstop_turns")
-        if backstop is None and envelope is not None:
-            backstop = envelope * thr["backstop_mult"]
+        backstop = backstop_for(thr, envelope)
         if (backstop is not None and self.cum_turns >= backstop
                 and is_stuck(self.st, thr)):
             # The ladder is nudge, THEN stop. On a benchmark the envelope was ~30 calls, so
@@ -413,48 +385,31 @@ class TurnGuard:
             # after it, a fresh segment must be stuck again before the backstop stops it.
             reason = f"cum-backstop:{self.cum_turns}>={backstop:.0f}t"
             if self.nudges_done < nudge_budget:
-                return self._stop("nudge", reason, envelope)
-            return self._stop("abort", reason, envelope)
+                return self._stop("nudge", reason)
+            return self._stop("abort", reason)
 
-        wired = None
-        if judge is not None:
-            wired = self._background(judge) if hasattr(judge, "poll") else self._sampled(judge)
+        wired = self._background(judge) if judge is not None else None
         abort, reason = assess_abort(self.st, envelope=envelope, judge=wired, thr=thr)
         if not abort:
             if (thr.get("nudge_on_ambiguous") and reason == "judge-ambiguous-spared"
                     and self.nudges_done < nudge_budget):
-                return self._stop("nudge", "ambiguous-past-envelope", envelope)
+                return self._stop("nudge", "ambiguous-past-envelope")
             return None
         if self.nudges_done < nudge_budget:
-            return self._stop("nudge", reason, envelope)
-        return self._stop("abort", reason, envelope)
+            return self._stop("nudge", reason)
+        return self._stop("abort", reason)
 
-    def _stop(self, action, reason, envelope):
-        self.events.append({"segment": self.segment, "action": action,
-                            "turn_in_segment": self.st.turns, "cum_turns": self.cum_turns,
-                            "envelope": envelope, "reason": reason,
-                            "snapshot": self.st.snapshot()})
+    def _stop(self, action, reason):
         if action == "abort":
             self.aborted = True
         return action, reason
 
-    def nudge_body(self, envelope=None, writer=None):
+    def nudge_body(self):
         """The redirect text: the one a background judge already wrote with its verdict, else
-        an LLM-written one when a writer is wired, else the count template
-        (`nudge_text`), which mirrors only the agent's own actions."""
+        the count template (`nudge_text`), which mirrors only the agent's own actions."""
         if self.nudge_ready:
             text, self.nudge_ready = self.nudge_ready, None
             return text
-        if writer is not None:
-            try:
-                out = writer(self.live_digest(self.st.recent_digest(envelope=envelope)))
-            except Exception:
-                out = None
-            if out:
-                self.writer_tokens += out.get("_tokens") or 0
-                text = (out.get("text") or "").strip()
-                if text:
-                    return text
         return nudge_text(self.st)
 
     def after_nudge(self):
@@ -472,5 +427,4 @@ class TurnGuard:
         return {"turn_key": self.turn_key, "tool_calls": self.cum_turns,
                 "nudges": self.nudges_done, "aborted": self.aborted,
                 "resolved_proxy": self.resolved_proxy(stopped_normally),
-                "edits": self.edits, "verifications": self.verifications,
-                "judge_tokens": self.judge_tokens, "writer_tokens": self.writer_tokens}
+                "edits": self.edits, "verifications": self.verifications}

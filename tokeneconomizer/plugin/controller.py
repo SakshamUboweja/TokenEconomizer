@@ -349,7 +349,7 @@ class LiveController:
             action, reason = decision
             short = reason.split(":")[0]
             if action == "nudge":
-                body = g.nudge_body(envelope)
+                body = g.nudge_body()
                 g.after_nudge()
                 s["nudges"] = int(s.get("nudges", 0)) + 1
                 self._log("nudge", reason=reason, tool_calls=g.cum_turns, envelope=envelope)

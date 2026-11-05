@@ -765,8 +765,8 @@ def test_a_background_judge_starts_once_and_its_verdict_nudges_a_later_call():
     j.verdict = {"stuck": True, "confidence": 0.9, "reason": "loop",
                  "_nudge": "Read the failing assertion before editing again."}
     assert _spin(g, j, 1)[0] == ("nudge", "judge-stuck@0.90:loop")
-    assert g.nudge_body(6.0) == "Read the failing assertion before editing again."
-    assert g.nudge_body(6.0) != "Read the failing assertion before editing again."  # used once
+    assert g.nudge_body() == "Read the failing assertion before editing again."
+    assert g.nudge_body() != "Read the failing assertion before editing again."  # used once
 
 
 def test_a_productive_verdict_backs_the_judge_off():

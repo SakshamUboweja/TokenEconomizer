@@ -173,21 +173,23 @@ def shell_revert_targets(cmd):
     """Basenames of the files a shell command puts back with `git checkout --` or `git
     restore`: `shell_edit_targets` counts them as written, which they are; the loop guard counts
     them as edits only for a file the turn edited."""
-    if not isinstance(cmd, str) or not cmd.strip():
-        return []
-    shell, _ = _split_heredocs(cmd)
-    cmds, _ = _commands(shell)
-    names = [basename(p) for tokens in _bare(cmds) for p in _restored(tokens) if _not_scratch(p)]
-    return list(dict.fromkeys(n for n in names if n))
+    return shell_edits_and_reverts(cmd)[1]
 
 
 def shell_edit_targets(cmd):
     """Basenames of the files a shell command writes, in order, without repeats."""
+    return shell_edits_and_reverts(cmd)[0]
+
+
+def shell_edits_and_reverts(cmd):
+    """`(shell_edit_targets(cmd), shell_revert_targets(cmd))` from one parse of the command:
+    the loop guard needs both for every shell command that edits."""
     if not isinstance(cmd, str) or not cmd.strip():
-        return []
+        return [], []
     shell, bodies = _split_heredocs(cmd)
     cmds, writes = _commands(shell)
     found = [w for w in writes if _SOURCE_FILE.search(w)]
+    restored = []
     for tokens in _bare(cmds):
         head = tokens[0].rsplit("/", 1)[-1]
         if head == "sed":
@@ -204,12 +206,17 @@ def shell_edit_targets(cmd):
         elif head == "patch" or (head == "git" and len(tokens) > 1 and tokens[1] == "apply"):
             found.append("(patch)")
         else:
-            found += _restored(tokens)
+            # Only a `git checkout`/`git restore` puts files back, and none of the heads above
+            # is git, so the reverts are all found here.
+            back = _restored(tokens)
+            found += back
+            restored += back
     if _PYTHON.search(shell):
         found += _py_writes("\n".join([shell] + bodies))
     names = [p if p.startswith("(") else basename(p)
              for p in found if p.startswith("(") or _not_scratch(p)]
-    return list(dict.fromkeys(n for n in names if n))
+    reverts = [basename(p) for p in restored if _not_scratch(p)]
+    return list(dict.fromkeys(n for n in names if n)), list(dict.fromkeys(n for n in reverts if n))
 
 
 def fold_shell_edits(st, names):
