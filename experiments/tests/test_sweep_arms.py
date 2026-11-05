@@ -410,7 +410,7 @@ def test_the_codex_family_relates_to_codex_trimech_as_the_generic_one_does_to_tr
 def test_codex_trimech_is_a_paid_arm():
     """The proposer bills, so the endpoint preflight must fire before task 0 rather than
     the first paid call failing 40 tasks into a live lane."""
-    from tokeneconomizer.config import needs_optimizer
+    from te_bench.config import needs_optimizer
     assert needs_optimizer(RX.ARMS["codex-trimech"].cfg()) is True
     assert RX.ARMS["codex-trimech"].cfg().injection.paid is True
 
@@ -605,7 +605,7 @@ def test_the_llm_free_arm_is_registered_and_makes_no_paid_call():
     with no proposer. (The DEFAULT Codex injection arm has carried the paid proposer on top
     since 2026-09-12 -- see test_envfacts_profiles.py.)"""
     from te_bench.arms import ARMS
-    from tokeneconomizer.config import EconomizerConfig, InjectionConfig, needs_optimizer
+    from te_bench.config import EconomizerConfig, InjectionConfig, needs_optimizer
     cfg = ARMS["codex-inject-envfacts"].cfg()
     assert cfg.injection.enabled and cfg.injection.profile == "envfacts"
     assert cfg.injection.paid is False

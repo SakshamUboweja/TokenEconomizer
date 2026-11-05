@@ -17,7 +17,6 @@ runner is threaded) and calls each mechanism's post-task hook in a fixed order
 SwebenchAdapter). `runner` may be an AgentRunner or a bare ``(prompt, model) ->
 (text, eff_tokens)`` optimizer callable; it is adapted for the mechanisms automatically.
 """
-from tokeneconomizer.config import EconomizerConfig
 from .runner import as_optimizer_callable
 from .adapters.swebench import SwebenchAdapter
 from tokeneconomizer.microskills import PrefixStage
@@ -63,15 +62,6 @@ class Economizer:
             config.spiral, max_turns,
             runner=spiral_runner, optimizer_model=optimizer_model,
             adapter=self.adapter, agent=agent)
-
-    @classmethod
-    def from_args(cls, args, *, repo, results_root, fresh, runner=None,
-                  make_runner=None, adapter=None):
-        return cls(EconomizerConfig.from_args(args),
-                   agent=args.agent, repo=repo, results_root=results_root,
-                   fresh=fresh, optimizer_model=getattr(args, "optimizer_model", "agent"),
-                   max_turns=getattr(args, "max_turns", 80),
-                   runner=runner, make_runner=make_runner, adapter=adapter)
 
     # ---- per-task hooks the orchestrator calls ----
     def injection_prefix(self, task=None):

@@ -7,7 +7,6 @@ each finished session back in, reporting the paid proposer's cost for that sessi
 """
 import os
 
-from ..stage import Stage
 from . import distiller as _distiller
 from .distiller import Distiller
 from .envfacts import EnvFactsDistiller
@@ -54,11 +53,10 @@ class ComposedDistiller:
 
 
 # ---- lifecycle stage -------------------------------------------------------
-class PrefixStage(Stage):
+class PrefixStage:
     """Injection lifecycle hook: render the manual before a task, fold the finished
     task back into the distiller after it, and report the paid proposer's per-task
     token delta for the amortized ledger."""
-    name = "prefix"
 
     def __init__(self, cfg, repo, results_root, fresh,
                  runner=None, optimizer_model="agent", adapter=None):

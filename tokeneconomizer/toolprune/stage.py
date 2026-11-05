@@ -17,16 +17,13 @@ pruning is off, so switching it on later starts from what was already seen.
 """
 import os
 
-from ..stage import Stage
 from . import codex as cu
 from .tools import judge_tools_for_task
 
 _CODEX_AGENTS = ("codex",)
 
 
-class ToolingStage(Stage):
-    name = "tooling"
-
+class ToolingStage:
     def __init__(self, cfg, agent, optimizer_model,
                  judge_tool_runner=None, *, adapter,
                  repo=None, results_root=None, fresh=False):

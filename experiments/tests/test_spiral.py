@@ -1,7 +1,7 @@
 """Spiral: generic envelope guard + Codex-native post-green policy."""
 from te_bench.spiral_stage import SpiralStage
 from te_bench import codex_spiral as cs
-from tokeneconomizer.config import SpiralConfig
+from te_bench.config import SpiralConfig
 
 
 def test_shipped_codex_policy_flags():
@@ -183,7 +183,7 @@ def test_defensive_guard_spends_its_budget_on_distinct_reasons_only():
 
 def test_defensive_profile_is_selectable_and_unpaid(tmp_path):
     from te_bench.arms import ARMS, ARM_ORDER
-    from tokeneconomizer.config import needs_optimizer, SpiralConfig
+    from te_bench.config import needs_optimizer, SpiralConfig
     c = ARMS["codex-spiral-defensive"].cfg()
     assert c.spiral.codex_spiral and c.spiral.codex_spiral_profile == "defensive"
     assert needs_optimizer(c) is False and "codex-spiral-defensive" in ARM_ORDER
@@ -240,7 +240,7 @@ def test_the_codex_envelope_is_advanced_in_the_unit_its_trigger_compares(tmp_pat
     ~45% above the count it is compared to and few tasks ever reach the gate. The stage
     must feed the tracker the trigger's own unit.
     """
-    from tokeneconomizer.config import SpiralConfig
+    from te_bench.config import SpiralConfig
     from te_bench.spiral_stage import SpiralStage
     cfg = SpiralConfig(codex_spiral=True, codex_spiral_profile="defensive")
     stage = SpiralStage(cfg, max_turns=80, agent="codex")

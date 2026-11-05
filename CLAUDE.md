@@ -14,7 +14,7 @@ agent behavior, and `docs/ARCHITECTURE.md` for how the package fits together.
   - `trace/` — each agent's session-log format (Claude Code, Codex, Copilot CLI, Pi, opencode,
     Cursor, Hermes Agent)
   - `plugin/` — the runtime: hook dispatch, per-repository state, settings, the `te` CLI
-  - `config.py`, `ledger.py`, `pricing.py`, `domain.py`, `stage.py` — shared by all three
+  - `config.py`, `ledger.py`, `pricing.py`, `domain.py` — shared by all three
 - `plugin/` — the installable plugin directory: manifests per agent, hook files, launchers
   (`scripts/te`, `scripts/te-hook`), slash commands (`slash-commands/`, named in the Claude Code
   and Copilot manifests, since Codex would turn a `commands/` folder into duplicate skills), Codex

@@ -42,10 +42,10 @@ class DomainAdapter(Protocol):
         ...
 
     def parse_catalog_with_source(self, run_dir_path, agent):
-        """-> ({tool: desc}, source_name) -- OPTIONAL. source_name is None when no catalog
-        source produced anything, which pruning reports as a defect rather than reading as
-        "no tools loaded". The default falls back to parse_catalog with source 'unknown'."""
-        return self.parse_catalog(run_dir_path, agent), "unknown"
+        """-> ({tool: desc}, source_name). source_name is None when no catalog source
+        produced anything, which pruning reports as a defect rather than reading as "no tools
+        loaded"."""
+        ...
 
     # ---- tool pruning ----
     def protected_tools(self):
@@ -64,6 +64,6 @@ class DomainAdapter(Protocol):
 
     # ---- micro-skill vocabulary (optional) ----
     def env_vocabulary(self):
-        """-> a `microskills.observe.Vocabulary` for this domain (default: Python/git)."""
-        from .microskills import PYTHON_GIT
-        return PYTHON_GIT
+        """-> a `microskills.observe.Vocabulary` for this domain. OPTIONAL: an adapter without
+        it gets the micro-skills' Python/git vocabulary."""
+        ...

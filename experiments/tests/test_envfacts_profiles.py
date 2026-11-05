@@ -5,7 +5,8 @@ import os
 from tokeneconomizer.microskills import envfacts as ef, observe
 from tokeneconomizer.microskills import ComposedDistiller, PrefixStage
 from te_bench import mechanism_arms as ci
-from tokeneconomizer.config import InjectionConfig, needs_optimizer
+from tokeneconomizer.config import InjectionConfig
+from te_bench.config import needs_optimizer
 from te_bench.adapters.swebench import SwebenchAdapter
 from fixtures import write_codex_transcript
 

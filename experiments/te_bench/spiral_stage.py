@@ -19,22 +19,19 @@ Two paths, chosen by agent:
       envelope. Never terminally aborts. Policy = codex_spiral.SHIPPED_POLICY at the
       repo's task-frozen threshold (a `CodexEnvelopeTracker`).
 
-The Stage supplies each path's params to the runner via `run_kwargs`; the runner owns the
+The stage supplies each path's params to the runner via `run_kwargs`; the runner owns the
 actual in-flight stream/kill/resume. `after_task` records telemetry and advances the
 envelope unconditionally once the task has run.
 """
 import os
 
 from tokeneconomizer.loopguard import EnvelopeTracker, llm_nudge_writer, llm_stuck_judge
-from tokeneconomizer.stage import Stage
 from . import codex_spiral as cs
 
 _CODEX_AGENTS = ("codex",)
 
 
-class SpiralStage(Stage):
-    name = "spiral"
-
+class SpiralStage:
     def __init__(self, cfg, max_turns, runner=None, optimizer_model="agent",
                  adapter=None, agent=None):
         self.cfg = cfg
@@ -43,8 +40,7 @@ class SpiralStage(Stage):
         self.agent = agent
 
         # ---- generic guard: per-repo envelope + host-side LLM closures ----
-        self.envelope = EnvelopeTracker(
-            level=cfg.aggr, frozen_envelope=getattr(cfg, "frozen_envelope", None))
+        self.envelope = EnvelopeTracker(frozen_envelope=cfg.frozen_envelope)
         self.spiral_judge = None
         self.spiral_nudge_writer = None
         if cfg.guard and cfg.judge:

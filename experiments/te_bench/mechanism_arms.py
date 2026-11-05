@@ -11,7 +11,7 @@ imports nothing from `te_bench.baselines`.
 mechanism active (`rtk`, `serena`, `repomap`).
 """
 from ._armspec import arm, cfg
-from tokeneconomizer.config import InjectionConfig, ToolingConfig, SpiralConfig
+from .config import InjectionConfig, ToolingConfig, SpiralConfig
 
 __all__ = ["MECHANISM_ARMS", "INJECT", "ENVFACTS", "ENVFACTS_PLUS", "UNTOOL", "SPIRAL",
            "SPIRAL_WEB", "CODEX_UNTOOL", "CODEX_SPIRAL", "CODEX_SPIRAL_POSTGREEN"]

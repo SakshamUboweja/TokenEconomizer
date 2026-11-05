@@ -174,10 +174,9 @@ class Bridge:
         for key in ended[:max(0, len(ended) - MAX_ENDED)]:
             del self.sessions[key]
 
-    def _record(self, row, root):
-        return {"id": root, "cwd": row["cwd"], "lock": threading.Lock(), "started": False,
-                "mode": "oneshot" if (row.get("created_source") or row.get("source")) == "oneshot"
-                        else "cli", "held": [], "notices": []}
+    def _record(self, root, cwd, origin):
+        return {"id": root, "cwd": cwd, "lock": threading.Lock(), "started": False,
+                "mode": "oneshot" if origin == "oneshot" else "cli", "held": [], "notices": []}
 
     def session(self, session_id):
         """The record of a session the plugin follows, or None. A row that cannot be read is
@@ -209,7 +208,7 @@ class Bridge:
                 return None
             found = self.sessions.get(root)
             if found is None:
-                found = self._record(dict(chain[0], cwd=cwd, created_source=origin), root)
+                found = self._record(root, cwd, origin)
                 self._forget_ended()
                 self.sessions[root] = found
             self.sessions[session_id] = found

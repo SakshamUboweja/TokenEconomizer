@@ -76,9 +76,8 @@ sys.path[:0] = [os.path.dirname(os.path.abspath(__file__)),  # _env, sweep_plan
                 os.path.dirname(_EXPERIMENTS)]              # the core, at the repository root
 from _env import load_env                                           # noqa: E402
 from te_bench.facade import Economizer                              # noqa: E402
-from tokeneconomizer import EconomizerConfig                        # noqa: E402
+from te_bench.config import needs_optimizer                         # noqa: E402
 from tokeneconomizer import ledger                                  # noqa: E402
-from tokeneconomizer.config import needs_optimizer               # noqa: E402
 
 
 # ---- arm registry ------------------------------------------------------------------------

@@ -16,7 +16,7 @@ FALLBACK_WEIGHTS = dict(input=1.0, cache_read=0.10, cache_write=1.25, output=6.0
 
 def effective(usage):
     """(effective_tokens, priced_by) for a usage breakdown; (None, "no_usage") without one."""
-    if not usage or usage.get("input_tokens") is None:
+    if not pricing.has_breakdown(usage):
         return None, "no_usage"
     rec = {k: usage.get(k) for k in ("input_tokens", "cache_read_input_tokens",
                                      "cache_creation_input_tokens", "output_tokens", "model")}

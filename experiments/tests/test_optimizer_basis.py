@@ -194,8 +194,8 @@ def test_both_harnesses_branch_on_the_endpoint_and_record_the_transport():
 # endpoint would leave an economized arm running as a baseline wearing its name. It runs
 # only for an arm that makes mechanism calls: `baseline` makes none, so probing for it
 # would bill a call it never needs and refuse a lane over an endpoint it never touches.
-# `config.needs_optimizer` is the gate, and these pin it to the facade so the two cannot
-# drift.
+# `te_bench.config.needs_optimizer` is the gate, and these pin it to the facade so the two
+# cannot drift.
 # ---------------------------------------------------------------------------------------
 def test_needs_optimizer_agrees_with_the_facade_for_every_arm():
     """The predicate must be true exactly when Economizer.__init__ would resolve a runner.
@@ -204,7 +204,7 @@ def test_needs_optimizer_agrees_with_the_facade_for_every_arm():
     them arm by arm, so adding an arm cannot silently skip a preflight it needs.
     """
     from te_bench.arms import ARMS
-    from tokeneconomizer.config import needs_optimizer
+    from te_bench.config import needs_optimizer
     for name, arm in sorted(ARMS.items()):
         cfg = arm.cfg()
         facade_would_resolve = bool(
@@ -219,7 +219,7 @@ def test_arm_mode_is_not_the_test():
     mode `standalone` and DO make paid calls, so gating on mode would skip their
     preflight and hand back exactly the silent-fallback rows it exists to prevent."""
     from te_bench.arms import ARMS
-    from tokeneconomizer.config import needs_optimizer
+    from te_bench.config import needs_optimizer
     for name in ("spiral-only", "untool-only"):
         assert ARMS[name].mode == "standalone", name
         assert needs_optimizer(ARMS[name].cfg()) is True, name
