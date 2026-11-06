@@ -17,6 +17,8 @@ import re
 from datetime import datetime
 
 from .jsonl import lines as _lines
+from .jsonl import parse as _parse
+from .jsonl import records as _records
 
 _CLAUDE_KEYS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
                 "output_tokens")
@@ -28,11 +30,7 @@ def claude_calls(lines):
     `tool_use` block paired with its `tool_result` by id, with the directory the shell was in."""
     out, order, seen = [], [], {}
     results = {}
-    for line in lines:
-        try:
-            ev = json.loads(line)
-        except Exception:
-            continue
+    for ev in _parse(lines):
         if ev.get("type", "assistant") not in CONVERSATION:
             continue
         msg = ev.get("message") or {}
@@ -83,14 +81,7 @@ def _is_prompt(ev):
 
 def claude_prompt_count(transcript_path):
     """How many prompts the person gave a Claude Code session (`_is_prompt`)."""
-    n = 0
-    for line in _lines(transcript_path):
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
-        n += isinstance(ev, dict) and _is_prompt(ev)
-    return n
+    return sum(1 for ev in _records(transcript_path) if _is_prompt(ev))
 
 
 # ---- the session logs Claude Code keeps -----------------------------------------------------
@@ -286,13 +277,7 @@ def claude_session_usage(transcript_path, include_subagents=True):
                                  if include_subagents else [])
     by_id, models, anon = {}, {}, 0
     for path in files:
-        for line in _lines(path):
-            if '"usage"' not in line:
-                continue
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue
+        for ev in _records(path, '"usage"'):
             if ev.get("type") != "assistant":
                 continue
             msg = ev.get("message") or {}
@@ -334,13 +319,8 @@ def claude_deferred_tools(transcript_path):
     Deferred tools cost one listing line each, not a schema, so they matter little to the bill;
     they are still part of what the session could call, so the pruning catalog includes them."""
     names = set()
-    for line in _lines(transcript_path):
-        if '"deferred_tools_delta"' not in line:
-            continue
-        try:
-            att = json.loads(line).get("attachment") or {}
-        except ValueError:
-            continue
+    for ev in _records(transcript_path, '"deferred_tools_delta"'):
+        att = ev.get("attachment") or {}
         names.update(n for n in (att.get("addedNames") or []) if isinstance(n, str))
         names.difference_update(n for n in (att.get("removedNames") or []) if isinstance(n, str))
     return names

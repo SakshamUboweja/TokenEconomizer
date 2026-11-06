@@ -226,6 +226,13 @@ class Host:
         return []
 
 
+def _converted(convert, transcript_path, workdir, name):
+    """`workdir/name`, once `convert` has rewritten the session log there as a Claude-shaped
+    trace; None when the log could not be read."""
+    out = os.path.join(workdir, name)
+    return out if convert(transcript_path, out) is not None else None
+
+
 def _failure_response(p):
     """A PostToolUseFailure payload's `error` as a response; None for any other payload. A
     shell failure names its exit code ("Exit code 2"); other failures carry none."""
@@ -381,9 +388,8 @@ class Codex(Host):
         return meta.get("source") == "exec" or str(meta.get("originator", "")) == "codex_exec"
 
     def mechanism_trace(self, transcript_path, workdir):
-        out = os.path.join(workdir, "codex_exec_trace.jsonl")
-        n = trace.codex_rollout_to_exec(transcript_path, out)
-        return out if n is not None else None
+        return _converted(trace.codex_rollout_to_exec, transcript_path,
+                          workdir, "codex_exec_trace.jsonl")
 
     def session_usage(self, transcript_path):
         return trace.codex_session_usage(transcript_path)
@@ -419,9 +425,8 @@ class Pi(Host):
         return str(env.get("TE_PI_MODE", "")).strip() in ("print", "json", "rpc")
 
     def mechanism_trace(self, transcript_path, workdir):
-        out = os.path.join(workdir, "pi_trace.jsonl")
-        n = trace.pi_session_to_claude(transcript_path, out)
-        return out if n is not None else None
+        return _converted(trace.pi_session_to_claude, transcript_path,
+                          workdir, "pi_trace.jsonl")
 
     def prompt_count(self, transcript_path):
         return trace.pi_prompt_count(transcript_path)
@@ -461,9 +466,8 @@ class OpenCode(Host):
         return str(env.get("TE_OPENCODE_MODE", "")).strip() == "run"
 
     def mechanism_trace(self, transcript_path, workdir):
-        out = os.path.join(workdir, "opencode_trace.jsonl")
-        n = trace.opencode_session_to_claude(transcript_path, out)
-        return out if n is not None else None
+        return _converted(trace.opencode_session_to_claude, transcript_path,
+                          workdir, "opencode_trace.jsonl")
 
     def prompt_count(self, transcript_path):
         return trace.opencode_prompt_count(transcript_path)
@@ -648,9 +652,8 @@ class Cursor(Host):
             pass
 
     def mechanism_trace(self, transcript_path, workdir):
-        out = os.path.join(workdir, "cursor_trace.jsonl")
-        n = trace.cursor_events_to_claude(transcript_path, out)
-        return out if n is not None else None
+        return _converted(trace.cursor_events_to_claude, transcript_path,
+                          workdir, "cursor_trace.jsonl")
 
     def prompt_count(self, transcript_path):
         return trace.cursor_prompt_count(transcript_path)
@@ -745,9 +748,8 @@ class Hermes(Host):
         return {"hermes_home": hermes_home(env)}
 
     def mechanism_trace(self, transcript_path, workdir):
-        out = os.path.join(workdir, "hermes_trace.jsonl")
-        n = trace.hermes_session_to_claude(transcript_path, out)
-        return out if n is not None else None
+        return _converted(trace.hermes_session_to_claude, transcript_path,
+                          workdir, "hermes_trace.jsonl")
 
     def prompt_count(self, transcript_path):
         return trace.hermes_prompt_count(transcript_path)

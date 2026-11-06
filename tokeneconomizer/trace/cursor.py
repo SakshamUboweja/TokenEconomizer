@@ -6,7 +6,7 @@ events locally and this reader pairs each tool request with its observed result.
 """
 import json
 
-from .jsonl import lines as _lines
+from .jsonl import records as _records
 
 
 def _response_text(response):
@@ -31,18 +31,8 @@ def _exit_code(response):
 
 def cursor_events_to_claude(path, out_path):
     """Write the normalized trajectory. Return the number of records, or None if unreadable."""
-    try:
-        lines = _lines(path)
-    except OSError:
-        return None
-    if not lines:
-        return None
     out = []
-    for line in lines:
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
+    for event in _records(path):
         name = event.get("hook_event_name")
         if name == "UserPromptSubmit":
             prompt = event.get("prompt")
@@ -80,11 +70,4 @@ def cursor_events_to_claude(path, out_path):
 
 def cursor_prompt_count(path):
     """Count actual prompt-submission events recorded by the adapter."""
-    count = 0
-    for line in _lines(path):
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
-        count += event.get("hook_event_name") == "UserPromptSubmit"
-    return count
+    return sum(1 for e in _records(path) if e.get("hook_event_name") == "UserPromptSubmit")

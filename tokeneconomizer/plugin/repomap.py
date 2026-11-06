@@ -31,6 +31,8 @@ import subprocess
 import sys
 import time
 
+from .paths import write_atomic
+
 
 # The generator ships with the core; the experiments' repo-map baseline runs the same one.
 GEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "repomap_gen.py")
@@ -65,12 +67,7 @@ def read_state(ctx):
 
 
 def _write_state(ctx, d):
-    path = _state_path(ctx)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(d, fh, indent=2)
-    os.replace(tmp, path)
+    write_atomic(_state_path(ctx), json.dumps(d, indent=2))
 
 
 def head_commit(root):

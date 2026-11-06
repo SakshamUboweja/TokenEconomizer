@@ -18,7 +18,7 @@ standard-library-only package `tokeneconomizer`:
   benchmark adapters (SWE-Bench, Web-Bench, CredData, ReposVul) are in
   `experiments/te_bench/adapters/`.
 - `tokeneconomizer.stage.Stage` is the set of hooks a mechanism offers whoever runs it:
-  `before_task`, `build_tools`, `run_kwargs` and `after_task`.
+  `build_tools`, `run_kwargs` and `after_task`.
 
 Two callers run the stages, and the mechanisms import neither:
 

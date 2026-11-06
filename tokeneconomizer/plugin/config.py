@@ -77,6 +77,8 @@ import math
 import os
 from dataclasses import asdict, dataclass, field, fields
 
+from .paths import write_atomic
+
 MICROSKILLS = ("off", "envfacts", "envfacts+distiller", "distiller")
 TOOLPRUNE = ("off", "propose", "auto")
 LOOPGUARD = ("off", "nudge", "stop")
@@ -411,8 +413,4 @@ def unset_config(path, keys):
 
 
 def _write(path, obj):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(obj, fh, indent=2, sort_keys=True)
-    os.replace(tmp, path)
+    write_atomic(path, json.dumps(obj, indent=2, sort_keys=True))

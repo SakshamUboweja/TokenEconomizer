@@ -18,6 +18,7 @@ import json
 import os
 import re
 
+from .jsonl import parse as _parse
 from .jsonl import records as _copilot_events
 
 _COPILOT_EXIT_RE = re.compile(r"<shellId: [^>]*?completed with exit code (-?\d+)>")
@@ -27,11 +28,7 @@ def copilot_event_calls(lines):
     """[(name, args, result_text, success)] from Copilot `tool.execution_*` events, a start
     paired with its completion by call id."""
     out, pend = [], {}
-    for line in lines:
-        try:
-            ev = json.loads(line)
-        except Exception:
-            continue
+    for ev in _parse(lines):
         t = ev.get("type")
         d = ev.get("data", {}) if isinstance(ev.get("data"), dict) else {}
         if t == "tool.execution_start":
@@ -49,13 +46,8 @@ def copilot_event_calls(lines):
 
 def copilot_session_cwd(lines):
     """The directory a Copilot session started in (`session.start` -> `context.cwd`), or None."""
-    for line in lines:
-        if '"session.start"' not in line:
-            continue
-        try:
-            d = json.loads(line).get("data") or {}
-        except ValueError:
-            continue
+    for ev in _parse(lines, '"session.start"'):
+        d = ev.get("data") or {}
         cwd = (d.get("context") or {}).get("cwd")
         return cwd if isinstance(cwd, str) else None
     return None

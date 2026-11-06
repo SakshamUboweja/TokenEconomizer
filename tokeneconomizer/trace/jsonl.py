@@ -14,12 +14,20 @@ def lines(path):
         return
 
 
-def records(path):
-    """Each line of a JSONL file that parses to a JSON object."""
-    for line in lines(path):
+def parse(text_lines, *needles):
+    """Each of `text_lines` that parses to a JSON object. With `needles`, only lines holding one
+    of them are parsed at all: a cheap substring test that skips most of a long log."""
+    for line in text_lines:
+        if needles and not any(n in line for n in needles):
+            continue
         try:
             ev = json.loads(line)
         except ValueError:
             continue
         if isinstance(ev, dict):
             yield ev
+
+
+def records(path, *needles):
+    """Each line of a JSONL file that parses to a JSON object (`parse`)."""
+    return parse(lines(path), *needles)

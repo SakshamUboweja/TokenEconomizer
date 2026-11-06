@@ -109,11 +109,10 @@ def test_evidence_untool_drops_after_streak(tmp_path):
 
 # ---- the mask must be EARNED, never a prior ---------------------------------
 # The mask comes only from observed disuse: none before the first task has completed, and
-# never one drawn from the adapters' static `untool_exclusions()` / INAPPLICABLE_TOOLS
-# surface, which is still exported but not reachable from the stage. A static prior would be
-# live from the first rollout, cost zero LLM tokens (so the honest ledger would charge nothing
-# for it) and give a byte-identical keep-set in every cell -- an unpaid, unlearned saving
-# rather than the evidence-gated mechanism. These tests pin that in BOTH domains, because the
+# never one drawn from a static list such as `toolprune.tools.INAPPLICABLE_TOOLS`, which the
+# stage does not read. A static prior would be live from the first rollout, cost zero LLM
+# tokens (so the honest ledger would charge nothing for it) and give a byte-identical keep-set
+# in every cell -- an unpaid, unlearned saving rather than the evidence-gated mechanism. These tests pin that in BOTH domains, because the
 # difference is invisible in aggregate numbers and shows up only as a suspiciously large cost
 # win.
 from te_bench.adapters import WebBenchAdapter                    # noqa: E402
@@ -166,25 +165,16 @@ def test_mask_appears_only_after_the_catalog_is_learned(tmp_path):
         assert t in mask, f"{t} was loaded and unused for 3 tasks; expected it dropped"
 
 
-def test_static_inapplicable_prior_is_not_applied(tmp_path):
-    """An adapter that declares EVERYTHING inapplicable must not change the mask.
-
-    The stage must consult observed usage, never the adapter's static
-    `inapplicable_tools` / `hardcoded_exclusions` surface.
-    """
-    class _GreedyPrior(WebBenchAdapter):
-        def inapplicable_tools(self):
-            return tuple(_CATALOG)
-        def hardcoded_exclusions(self, used_tools):
-            return list(_CATALOG)
-
-    stage = _stage(tmp_path, _GreedyPrior("zustand"))
+def test_one_task_of_disuse_is_not_enough_evidence(tmp_path):
+    """Before the evidence threshold is reached the mask stays empty: no tool is dropped on a
+    prior, only on observed disuse."""
+    stage = _stage(tmp_path, WebBenchAdapter("zustand"))
     assert stage.build_tools({"instance_id": "task-1"}, 0) == []      # still unmasked
     _finish(stage, tmp_path, 0, ["Bash", "Edit", "Read", "Write"])
     mask = stage.build_tools({"instance_id": "task-2"}, 1)
     assert not (set(mask) & reflect.PROTECTED_TOOLS)
     # one task of disuse is below the evidence threshold of 3 -> nothing earned yet
-    assert mask == [], f"a static prior leaked into the mask: {mask}"
+    assert mask == [], f"a tool was dropped before it earned it: {mask}"
 
 
 def test_untooling_is_off_entirely_without_an_evidence_threshold(tmp_path):

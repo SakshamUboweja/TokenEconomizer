@@ -12,7 +12,7 @@ import os
 import re
 
 from tokeneconomizer import trace
-from tokeneconomizer.toolprune.tools import INAPPLICABLE_TOOLS, PROTECTED_TOOLS
+from tokeneconomizer.toolprune.tools import PROTECTED_TOOLS
 
 # Task-spec source for the per-task tool judge. PLACEHOLDER: set this env var to the path
 # of your SWE-bench instances JSON (list of {instance_id, problem_statement, ...}).
@@ -26,29 +26,10 @@ _GOLD_URL_RE = re.compile(
     r"(?:pull|pulls|issues|issue|commit|commits|compare|blob|tree)/\S+", re.I)
 
 
-def untool_exclusions(used_tools=None, extra_inapplicable=()):
-    """The tools to exclude from one sealed task's schema.
-
-    The static `INAPPLICABLE_TOOLS` set (inapplicable by construction for a sealed single
-    task), widened by `extra_inapplicable`, less any tool `used_tools` shows in use across the
-    stream so far (a repository that genuinely uses one is never starved). `PROTECTED_TOOLS`
-    are never excluded."""
-    used = set(used_tools or ())
-    cand = list(INAPPLICABLE_TOOLS) + [t for t in extra_inapplicable
-                                       if t not in INAPPLICABLE_TOOLS]
-    return [t for t in cand if t not in PROTECTED_TOOLS and t not in used]
-
-
 def redact_gold_pointers(text):
     """Return (redacted_text, n_redacted) with gold-solution URLs masked."""
     n = len(_GOLD_URL_RE.findall(text or ""))
     return _GOLD_URL_RE.sub("[link redacted]", text or ""), n
-
-
-# SWE-bench's task containers have no network, so on this benchmark the web tools cannot work;
-# they join the static inapplicable set here, in the benchmark's own adapter, rather than in
-# the shared list every domain reads.
-NETWORK_TOOLS = ("WebSearch", "WebFetch")
 
 
 class SwebenchAdapter:
@@ -75,12 +56,6 @@ class SwebenchAdapter:
     # ---- untooling tool-sets ----
     def protected_tools(self):
         return PROTECTED_TOOLS
-
-    def inapplicable_tools(self):
-        return tuple(INAPPLICABLE_TOOLS) + NETWORK_TOOLS
-
-    def hardcoded_exclusions(self, used_tools):
-        return untool_exclusions(used_tools, extra_inapplicable=NETWORK_TOOLS)
 
     # ---- spiral envelope ----
     def spiral_snapshot(self, path):
