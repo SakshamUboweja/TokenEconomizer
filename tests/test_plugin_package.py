@@ -198,6 +198,38 @@ def test_the_launcher_fails_open_without_python(tmp_path):
     assert code == 0 and json.loads(out) == {}
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Git Bash checks symlinks out as plain files")
+def test_the_launchers_run_through_a_symlink(tmp_path):
+    """`ln -s <plugin>/scripts/te ~/bin/te` is how a command goes on PATH: the launcher must
+    find te_bootstrap.py next to the file it is, not next to the link."""
+    links = tmp_path / "bin"
+    links.mkdir()
+    os.symlink(os.path.join(PLUGIN, "scripts", "te-hook"), links / "te-hook")
+    os.symlink(os.path.join(PLUGIN, "scripts", "te"), links / "te-abs")
+    os.symlink(os.path.relpath(links / "te-abs", tmp_path), tmp_path / "te")   # relative, to a link
+    work = tmp_path / "work"
+    work.mkdir()
+    code, out, err = _run_hook(str(links / "te-hook"),
+                               {"hook_event_name": "SessionStart", "session_id": "s",
+                                "cwd": str(work), "source": "startup"}, _hook_env(tmp_path))
+    assert code == 0 and json.loads(out) == {}, err
+    assert os.path.isdir(tmp_path / "home" / "repos")
+    p = subprocess.run([str(tmp_path / "te"), "--help"], capture_output=True, text=True,
+                       env=_hook_env(tmp_path), timeout=60)
+    assert p.returncode == 0 and p.stdout.startswith("usage: te"), p.stderr
+
+
+def test_the_launcher_runs_as_sh_te_hook_from_its_directory(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    p = subprocess.run([git_sh() or "sh", "te-hook"], cwd=os.path.join(PLUGIN, "scripts"),
+                       input=json.dumps({"hook_event_name": "SessionStart", "session_id": "s",
+                                         "cwd": str(work), "source": "startup"}),
+                       capture_output=True, text=True, env=_hook_env(tmp_path), timeout=60)
+    assert p.returncode == 0 and json.loads(p.stdout) == {}, p.stderr
+    assert os.path.isdir(tmp_path / "home" / "repos")
+
+
 def test_the_bootstrap_answers_no_change_on_an_old_python(tmp_path, monkeypatch):
     sys.path.insert(0, os.path.join(PLUGIN, "scripts"))
     try:

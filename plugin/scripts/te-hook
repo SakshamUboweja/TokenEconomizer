@@ -8,6 +8,13 @@ self=$0
 if [ "${OS:-}" = Windows_NT ]; then
   case $self in *\\*) self=$(printf '%s' "$self" | tr '\\' '/') ;; esac
 fi
+# Find this file's own directory: through a symlink (`ln -s .../scripts/te ~/bin/te`) $0 is the
+# link, so follow it (readlink without -f, which older macOS lacks); `sh te` gives a bare name.
+while [ -L "$self" ]; do
+  link=$(readlink "$self" 2>/dev/null) || break
+  case $link in /*) self=$link ;; *) case $self in */*) self=${self%/*}/$link ;; *) self=$link ;; esac ;; esac
+done
+case $self in */*) ;; *) self=./$self ;; esac
 dir=$(CDPATH= cd -- "${self%/*}" && pwd)
 # Session logs are UTF-8; without this, Python on Windows reads them in the ANSI code page.
 export PYTHONUTF8=1
