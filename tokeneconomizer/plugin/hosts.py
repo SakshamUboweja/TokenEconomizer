@@ -258,9 +258,11 @@ class Host:
         """Is `path` the log of session `sid`? Most agents name the file after the session."""
         return os.path.basename(path) == f"{sid}.jsonl"
 
-    # Whether a finished session is folded inside its SessionEnd hook rather than in a detached
-    # process: for an agent that stops what a hook leaves running once the hook returns.
-    fold_at_end = False
+    # Whether the agent stops what a hook leaves running once the hook returns (Muse Code). Then
+    # a finished session is folded inside its SessionEnd hook rather than in a detached process,
+    # the loop guard asks no judge (a detached job), and the history import is not started from
+    # a hook (`te history import` runs it from a terminal).
+    stops_background = False
 
 
 def _failure_response(p):
@@ -1354,9 +1356,11 @@ class Muse(Host):
       * `transcript_path` may be null; the log is found under Muse's data directory
         (`trace.muse_find_log`).
       * Muse stops the background processes a plugin hook leaves running once it returns
-        (changelog 1.4.8), so a finished session is folded inside its SessionEnd hook, which
-        the manifest runs as an asynchronous, observe-only hook with a long timeout
-        (`fold_at_end`). A fold cut short is retried at a later session's end.
+        (changelog 1.4.8), so a finished session is folded inside its SessionEnd hook rather
+        than in a detached `te fold` (`stops_background`); the manifest marks that hook
+        asynchronous (observe-only), which is unverified on a live Muse. A fold cut short is
+        retried at a later session's end. For the same reason the loop guard asks no judge here
+        (its judge is a detached job), and the history import runs only from a terminal.
 
     Tool pruning is not available: Muse has no per-repository setting that removes a built-in
     tool from the model's list (`denylist.supports` says so).
@@ -1367,7 +1371,7 @@ class Muse(Host):
     # model passes a still-stuck notice on as well.
     relays_notices = True
     keeps_history = True
-    fold_at_end = True
+    stops_background = True
     CONTEXT_EVENTS = _MUSE_CONTEXT_EVENTS
     OUTPUT_CAP = 15000                 # bytes of serialized answer; Muse kills a hook at 16 KiB
     NOTICE_CAP = 1000                  # characters Muse keeps of a `systemMessage`
@@ -1407,13 +1411,27 @@ class Muse(Host):
         except OSError:
             pass
 
-    def _is_sidecall(self, cwd):
+    def _is_sidecall(self, cwd, env):
         """Is this a session the plugin's own `muse exec` runs? Its hooks get no `TE_SIDECALL`
-        (Muse clears the environment), so the call's throwaway directory is marked instead."""
+        (Muse clears the environment), so the call's throwaway directory holds a marker naming
+        a one-time token, which the call registers under the plugin's state root for as long as
+        it runs (`sidecall.muse_call`). A marker a repository commits names no live token."""
         if not isinstance(cwd, str) or not cwd:
             return False
-        return (os.path.basename(os.path.normpath(cwd)).startswith("te-side-")
-                and os.path.isfile(os.path.join(cwd, self.SIDECALL_MARK)))
+        try:
+            with open(os.path.join(cwd, self.SIDECALL_MARK), encoding="ascii") as fh:
+                token = fh.read(64).strip()
+        except (OSError, ValueError):
+            return False
+        if not re.fullmatch(r"[0-9a-f]{32}", token):
+            return False
+        from .paths import state_root
+        try:
+            with open(os.path.join(state_root(env), "muse-sidecalls", token),
+                      encoding="utf-8") as fh:
+                return fh.read(4096) == os.path.realpath(cwd)
+        except (OSError, ValueError):
+            return False
 
     def prepare(self, payload, env):
         """The payload in the controller's terms; one with no `session_id` (answered `{}`) for a
@@ -1438,7 +1456,7 @@ class Muse(Host):
                 kept["cwd"] = cwd
         elif kept.get("cwd"):
             p["cwd"] = kept["cwd"]          # a tool's own directory, or the end's
-        if self._is_sidecall(p.get("cwd")):
+        if self._is_sidecall(p.get("cwd"), env):
             p["session_id"] = ""
             return p
         log = trace.muse_find_log(sid, p.get("transcript_path") or kept.get("transcript"), env)
@@ -1638,10 +1656,11 @@ def detect(payload, env=None, hint=None):
         return Antigravity()
     tp = str((payload or {}).get("transcript_path") or "")
     sp = tp.replace("\\", "/")              # a Windows path, with either separator
-    # Muse Code keeps its logs under `<data dir>/muse/sessions/`, and sets `MUSE_PLUGIN_ROOT`
-    # only for a plugin's hooks (its hook environment is cleared, and its shell tool never gets
-    # it). Before Codex's rule: Muse stamps `turn_id` too, and it installs a Claude plugin's
-    # hook file as it is, with no `--host`.
+    # Muse Code keeps its logs under `<data dir>/muse/sessions/`, and documents
+    # `MUSE_PLUGIN_ROOT` only for a plugin's hooks, whose environment it clears to an allowlist
+    # (that its shell tool never carries it is assumed, not documented). Before Codex's rule:
+    # Muse stamps `turn_id` too, and it installs a Claude plugin's hook file as it is, with no
+    # `--host`.
     if "/muse/sessions/" in sp or (not tp and (env or {}).get("MUSE_PLUGIN_ROOT")):
         return Muse()
     # grok runs Claude Code's plugin hooks, with no `--host`, so it is told from Claude Code

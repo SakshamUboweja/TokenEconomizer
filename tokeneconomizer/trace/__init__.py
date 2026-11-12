@@ -38,7 +38,7 @@ from .grok import (grok_json_reply, grok_prompt_count, grok_result, grok_session
 from .hermes import (hermes_export, hermes_find_session, hermes_prompt_count, hermes_result,
                      hermes_row_usage, hermes_session_info, hermes_session_row,
                      hermes_session_to_claude, hermes_session_usage, hermes_tool)
-from .muse import (muse_data_dir, muse_ended_since, muse_exec_reply, muse_find_log,
+from .muse import (muse_data_dir, muse_exec_reply, muse_find_log,
                    muse_log_head, muse_prompt_count, muse_prompt_turns, muse_safe_session_id,
                    muse_session_to_claude, muse_session_usage, muse_sessions)
 from .opencode import (opencode_prompt_count, opencode_run_reply, opencode_session_info,
@@ -69,7 +69,7 @@ __all__ = [
     "hermes_export", "hermes_find_session", "hermes_prompt_count", "hermes_result",
     "hermes_row_usage", "hermes_session_info", "hermes_session_row", "hermes_session_to_claude",
     "hermes_session_usage", "hermes_tool",
-    "muse_data_dir", "muse_ended_since", "muse_exec_reply", "muse_find_log", "muse_log_head",
+    "muse_data_dir", "muse_exec_reply", "muse_find_log", "muse_log_head",
     "muse_prompt_count", "muse_prompt_turns", "muse_safe_session_id", "muse_session_to_claude",
     "muse_session_usage", "muse_sessions",
     "opencode_prompt_count", "opencode_run_reply", "opencode_session_info",

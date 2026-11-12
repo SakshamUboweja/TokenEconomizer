@@ -445,6 +445,10 @@ def maybe_start(ctx, now=None):
     when there is no `history.json` yet. A store with folded sessions records the skip, once."""
     if not getattr(ctx.host, "keeps_history", False):
         return None
+    if getattr(ctx.host, "stops_background", False) and ctx.env.get("TE_FOLD_SYNC") != "1":
+        # The agent stops a hook's detached processes (Muse Code), and an import left `running`
+        # would hold back every fold: there, `te history import` runs it from a terminal.
+        return None
     now = time.time() if now is None else now
     exists = os.path.exists(ctx.store.path(STATE))
     if exists and read_state(ctx) is None:

@@ -15,9 +15,9 @@ lists what still needs a live run.
 | Micro-skills (repository facts at session start) | yes | `SessionStart` accepts `hookSpecificOutput.additionalContext` |
 | History import (learn from earlier sessions) | yes | `<data dir>/sessions/<YYYY>/<MM>/<DD>/<id>/session.jsonl` records the tool calls |
 | Session cost / effective tokens | yes, priced as `fallback` | each model call's `model_completed` event carries its usage; Muse's models are not in the price table |
-| Loop guard (redirect a failing loop) | yes | `PostToolUse` and `PostToolUseFailure` accept `additionalContext`; the judge needs a side call, which is off by default |
-| Repository map (`repomap=on`) | yes | `UserPromptSubmit` accepts `additionalContext` |
-| Tool pruning | no | Muse has no per-repository setting that removes a built-in tool from the model's list; `--disable-*` and `--preset` are launch flags |
+| Loop guard (redirect a failing loop) | rule backstop only | `PostToolUse` and `PostToolUseFailure` accept `additionalContext`; the model judge is a detached job, which Muse would stop, so it is not asked here |
+| Repository map (`repomap=on`) | unverified | `UserPromptSubmit` accepts `additionalContext`, but the map is built by a detached refresh Muse may stop; `te --host muse repomap refresh` in a terminal builds it |
+| Tool pruning | no | Muse documents no per-repository setting that removes a built-in tool from the model's list; `--disable-*` and `--preset` are launch flags |
 
 ## Install
 
@@ -51,14 +51,17 @@ Check it in the repository:
 - **Hooks.** `plugin/.muse-plugin/plugin.json` registers six hooks: `SessionStart`,
   `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `Stop` and `SessionEnd`. A native
   hook is an argv with no shell, and Muse refuses two hooks with the same script, so each event
-  has a two-line wrapper in `plugin/muse/hooks/` that runs the shared launcher with
-  `--host muse`. There is no `PreToolUse` hook: the plugin never blocks a call.
+  has a short wrapper in `plugin/muse/hooks/` that runs the shared launcher with
+  `--host muse` (it falls back to its own place for the plugin root, and answers `{}` if the
+  launcher is missing). There is no `PreToolUse` hook: the plugin never blocks a call.
 - **Answers.** Muse's answer schema is closed: an unknown key, a top-level `additionalContext`,
   or a key an event does not allow rejects the hook's whole answer, and a hook whose stdout or
   stderr passes 16 KiB is killed. The adapter keeps only `systemMessage` (at most 1000
   characters) and `hookSpecificOutput.{hookEventName, additionalContext}`, cut at a line
   boundary to fit, and the wrappers discard stderr (errors still go to
-  `~/.tokeneconomizer/errors.log`).
+  `~/.tokeneconomizer/errors.log`). A `systemMessage` that arrives while no turn runs shows
+  nothing, so the session-start line ("added N learned fact(s)") is not seen on Muse:
+  `te --host muse microskills` shows what was added.
 - **The session's directory.** Tool events report the tool's own working directory as `cwd`.
   The adapter keeps the session's directory from its first hook, in
   `~/.tokeneconomizer/muse-sessions/<session id>.json` (removed at the session's end), so a
@@ -68,8 +71,16 @@ Check it in the repository:
   `$XDG_DATA_HOME/muse`, else `~/.local/share/muse`.
 - **Folding.** Muse stops the processes a plugin hook leaves running once the hook returns
   (changelog 1.4.8). So the plugin does not leave a detached `te fold` behind at the end: the
-  `SessionEnd` hook is asynchronous (observe-only, five-minute timeout) and folds the session
-  inside the hook, with any earlier session whose fold was cut short.
+  `SessionEnd` hook folds the session inside the hook, with any earlier session whose fold was
+  cut short, within a time budget. The manifest marks that hook asynchronous (observe-only,
+  five-minute timeout); Muse documents asynchronous hooks as running in the background, not
+  that it waits for one at exit, so this is unverified. A fold cut short stays pending and is
+  done at a later session's end.
+- **Other background work.** For the same reason the loop guard asks no model judge on Muse
+  (it redirects only at its rule backstop), and the history import is never started from a hook
+  even with `history_import=on`: run `te --host muse history import` from a terminal. The fold
+  of a session that ended without its `SessionEnd` and the repository map's refresh are still
+  started in the background at a session's start, and may be stopped.
 - **Subagents and side threads.** A hook whose `MUSE_THREAD_ID` differs from `MUSE_SESSION_ID`
   belongs to a child or side thread and is left alone.
 
@@ -109,9 +120,13 @@ muse exec --json --no-session-log --preset empty --disable-reminders \
 
 in a throwaway directory, on your default model (or `muse_paid_model`). `--preset empty` starts
 the run with no built-in tool, and the call never passes `--yolo`, `--trust-workspace` or
-`--disable-approval`. If your build rejects `--preset`, the call retries with
-`--disable-write --disable-shell`. The prompt goes in a file, not on the command line. These
-flags are documented in Muse's changelog, not its manual, which is why the calls start off.
+`--disable-approval`. The prompt goes in a file, not on the command line. If your build refuses
+any of these flags, the call answers nothing (errors.log says why); there is no weaker retry.
+The flags that leave the run with no tool (`--preset`, `--disable-reminders`,
+`--disable-request-user-input`) are documented only in Muse's changelog, and `--preset empty`
+keeps the tools of MCP servers you configured: these are why the calls start off. Since the
+loop guard asks no judge on Muse, the setting matters only to micro-skills' proposer
+(`microskills=on`).
 
 Muse's hooks receive no proxy settings and no provider key, so a call made from a hook uses the
 key or browser session Muse has stored. Behind an HTTP proxy, side calls fail; with them off,

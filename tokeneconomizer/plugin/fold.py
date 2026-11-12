@@ -31,13 +31,14 @@ from .adapter import LiveAdapter, load_catalog
 from .hosts import FoldLater
 
 STALE_S = 600          # an unfolded session whose transcript is quiet this long is over
-# A fold never runs in a hook -- it is a detached process, or `te fold` -- so it can wait for
-# another fold to finish, up to one paid side call, and must never proceed without the lock:
-# two folds of one session would both find it unfolded and count it twice, in every mechanism's
-# state and in the ledger. That happened whenever a session started while the previous one's
-# paid fold was still in its side call (the next SessionStart re-folds whatever is not yet
-# marked folded). A fold that still cannot take the lock skips: the holder finishes the
-# session, or, if it died, the session stays pending and the next SessionStart folds it.
+# A fold runs in a hook only on an agent that stops a hook's detached processes (`_fold_in_hook`,
+# which waits `INLINE_LOCK_WAIT_S` at most). Elsewhere it is a detached process, or `te fold`, so
+# it can wait for another fold to finish, up to one paid side call, and must never proceed
+# without the lock: two folds of one session would both find it unfolded and count it twice, in
+# every mechanism's state and in the ledger. That happened whenever a session started while the
+# previous one's paid fold was still in its side call (the next SessionStart re-folds whatever
+# is not yet marked folded). A fold that still cannot take the lock skips: the holder finishes
+# the session, or, if it died, the session stays pending and the next SessionStart folds it.
 FOLD_LOCK_WAIT_S = sidecall.TIMEOUT_S + 60
 
 # A deny list changes the tools a session sends, and the tools open the cached prompt prefix.
@@ -441,7 +442,7 @@ def import_blocks(ctx):
     return isinstance(doc, dict) and doc.get("state") in HISTORY_BLOCKING
 
 
-def fold_session(ctx, session_id, transcript_path=None):
+def fold_session(ctx, session_id, transcript_path=None, lock_wait=None):
     """Fold one finished session. Returns the ledger record, or None if already folded -- or
     if it is left for later: the fold lock stayed busy, or an import of earlier sessions is
     under way (the session stays pending, and the import folds it once it is done, else the
@@ -449,7 +450,8 @@ def fold_session(ctx, session_id, transcript_path=None):
     never waits on an import's lock."""
     if import_blocks(ctx):
         return None
-    with ctx.store.locked("fold", timeout=FOLD_LOCK_WAIT_S) as got:
+    wait = FOLD_LOCK_WAIT_S if lock_wait is None else lock_wait
+    with ctx.store.locked("fold", timeout=wait) as got:
         if not got or import_blocks(ctx):
             return None
         return fold_locked(ctx, session_id, transcript_path)
@@ -572,13 +574,45 @@ def pending_sessions(ctx, exclude=(), stale_s=STALE_S, now=None):
     return [sid for _, sid in sorted(out)]
 
 
+# Folding inside a hook (`Host.stops_background`): how long it may take before it leaves the rest
+# pending, within the hook's own timeout (300 s in the Muse manifest), and how long it waits for
+# another fold of the repository to finish -- that fold, or a later session's end, folds these.
+INLINE_BUDGET_S = 200
+INLINE_LOCK_WAIT_S = 5
+
+
+def _fold_in_hook(ctx, session_ids, budget_s=INLINE_BUDGET_S):
+    """Fold `session_ids` in this process, one at a time, until the budget is spent. A session
+    whose fold raises is noted in errors.log and left pending; the next one is still folded."""
+    import traceback
+    deadline = time.time() + budget_s
+    out = []
+    for sid in session_ids:
+        if time.time() >= deadline:
+            break
+        try:
+            out.append(fold_session(ctx, sid, lock_wait=INLINE_LOCK_WAIT_S))
+        except Exception:
+            out.append(None)
+            try:
+                os.makedirs(ctx.root, exist_ok=True)
+                with open(os.path.join(ctx.root, "errors.log"), "a", encoding="utf-8") as fh:
+                    fh.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')} fold {sid}\n")
+                    fh.write(traceback.format_exc())
+            except OSError:
+                pass
+    return out
+
+
 def spawn_fold(ctx, session_ids, inline=False):
     """Fold sessions in a detached process (inline with `inline`, for an agent that stops what a
     hook leaves running, or when TE_FOLD_SYNC=1, for tests). Not while an import of earlier
     sessions is under way: it folds them once it is done."""
     if not session_ids or import_blocks(ctx):
         return None
-    if inline or ctx.env.get("TE_FOLD_SYNC") == "1":
+    if inline:
+        return _fold_in_hook(ctx, session_ids)
+    if ctx.env.get("TE_FOLD_SYNC") == "1":
         return [fold_session(ctx, sid) for sid in session_ids]
     return ctx.spawn(["fold"] + [a for sid in session_ids for a in ("--session", sid)],
                      "fold.log")

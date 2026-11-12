@@ -24,7 +24,7 @@ import time
 import pytest
 
 from tokeneconomizer import trace
-from tokeneconomizer.plugin import accounting, denylist, history, hook, hosts, sidecall
+from tokeneconomizer.plugin import accounting, denylist, fold, history, hook, hosts, paths, sidecall
 from tokeneconomizer.plugin.context import LiveContext
 
 SID = "0198f0aa-2222-7000-8000-0000000000bb"
@@ -112,6 +112,19 @@ def _env(state, data):
     return {"TOKENECONOMIZER_HOME": str(state), "TE_FOLD_SYNC": "1",
             "TE_MICROSKILLS": "envfacts", "TE_TOOLPRUNE": "off",
             "TE_MUSE_DATA_DIR": str(data), "PATH": os.environ.get("PATH", "")}
+
+
+def _side_dir(state, folder, token="ab" * 16):
+    """A side call's throwaway directory, as `sidecall.muse_call` makes one: its marker names a
+    token registered under the state root with the directory's real path."""
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, ".te-sidecall"), "w", encoding="ascii") as fh:
+        fh.write(token)
+    reg = os.path.join(str(state), "muse-sidecalls")
+    os.makedirs(reg, exist_ok=True)
+    with open(os.path.join(reg, token), "w", encoding="utf-8") as fh:
+        fh.write(os.path.realpath(folder))
+    return str(folder)
 
 
 def _call(env, payload):
@@ -225,6 +238,65 @@ def test_garbage_usage_values_are_not_counted(tmp_path):
 
 
 # ---- finding the log --------------------------------------------------------------------------
+def test_model_written_arguments_cannot_break_the_reader(tmp_path):
+    """A call's `args` is whatever the model wrote, and a damaged log can hold anything: deep
+    nesting, or a list field that is not a list, reads as nothing rather than raising."""
+    deep = "[" * 100_000 + "]" * 100_000
+    log = _Log().head(str(tmp_path)).prompt("go")
+    log.run({"kind": "assistant_tool_calls_committed", "message_id": "m", "tool_calls": [
+        {"args": deep, "call_id": "c1", "name": "bash"}]})
+    log.run({"kind": "assistant_tool_calls_committed", "message_id": "m", "tool_calls": 5})
+    log.run({"kind": "tool_result_batch_committed", "batch_id": "b", "results": {"a": 1}})
+    log.run({"kind": "tool_result_batch_committed", "batch_id": "b", "results": [
+        {"text": deep, "tool_call_id": "c1"}]})
+    log.lines.append(deep)
+    path = log.answer().end().write(tmp_path / "d")
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(deep + "\n")
+    assert trace.muse_session_to_claude(path, str(tmp_path / "out.jsonl")) == 1
+    trace.muse_session_usage(path)
+    trace.muse_prompt_turns(path)
+
+
+def test_a_session_whose_fold_raises_does_not_stop_the_others(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    ctx = LiveContext.build(hosts.Muse(), str(repo), _env(tmp_path / "state", tmp_path / "d"))
+    done = []
+
+    def fake_fold(ctx_, sid, lock_wait=None):
+        assert lock_wait == fold.INLINE_LOCK_WAIT_S
+        if sid == "bad":
+            raise RecursionError("poisoned")
+        done.append(sid)
+        return sid
+
+    monkeypatch.setattr(fold, "fold_session", fake_fold)
+    assert fold._fold_in_hook(ctx, ["a", "bad", "b"]) == ["a", None, "b"]
+    assert done == ["a", "b"]
+    assert "poisoned" in open(os.path.join(ctx.root, "errors.log"), encoding="utf-8").read()
+    # Past its budget, the rest stay pending for a later session's end.
+    done.clear()
+    assert fold._fold_in_hook(ctx, ["a", "b"], budget_s=0) == [] and done == []
+
+
+def test_nothing_is_left_running_in_the_background_on_muse(tmp_path, monkeypatch):
+    """Muse stops what a hook leaves behind: no history import starts from a hook, and the
+    loop guard asks no judge (its rule backstop still applies)."""
+    from tokeneconomizer.plugin.controller import LiveController
+    from tokeneconomizer.plugin.judge import NoVerdict
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = _env(tmp_path / "state", tmp_path / "d")
+    env.pop("TE_FOLD_SYNC")
+    ctx = LiveContext.build(hosts.Muse(), str(repo), dict(env, TE_HISTORY_IMPORT="on"))
+    assert history.maybe_start(ctx) is None
+    assert not os.path.exists(ctx.store.path(history.STATE))
+    monkeypatch.setattr(sidecall, "paused", lambda *a: False)
+    ctl = LiveController(ctx, {"session_id": SID})
+    assert isinstance(ctl._judge(None, {"p90": 1}), NoVerdict)
+
+
 def test_the_data_directory_and_the_log_are_found(tmp_path):
     assert trace.muse_data_dir({"TE_MUSE_DATA_DIR": "/a"}) == "/a"
     assert trace.muse_data_dir({"MUSE_PLUGIN_DATA_DIR": "/h/m/plugins/data/tokeneconomizer"}) \
@@ -281,13 +353,29 @@ def test_prepare_drops_child_threads_side_calls_and_bad_ids(tmp_path):
         "session_id"] == ""
     assert host.prepare(dict(base, session_id="../x"), env)["session_id"] == ""
     assert host.prepare(dict(base, agent_id="a"), env)["session_id"] == ""
-    side = tmp_path / "te-side-abc"
-    side.mkdir()
-    (side / ".te-sidecall").write_text("")
-    assert host.prepare(dict(base, cwd=str(side)), env)["session_id"] == ""
-    # The marker alone, in a directory not named as a side call's, is no side call.
-    (tmp_path / ".te-sidecall").write_text("")
+    side = _side_dir(tmp_path / "s", tmp_path / "te-side-abc")
+    assert host.prepare(dict(base, cwd=side), env)["session_id"] == ""
+
+
+def test_a_marker_a_repository_commits_is_no_side_call(tmp_path):
+    """A `.te-sidecall` file is only a side call's while the plugin has its token registered:
+    a repository cannot switch the plugin off by committing one."""
+    host = hosts.Muse()
+    env = {"TOKENECONOMIZER_HOME": str(tmp_path / "s"), "TE_MUSE_DATA_DIR": str(tmp_path)}
+    repo = tmp_path / "te-side-forged"
+    repo.mkdir()
+    base = {"hook_event_name": "UserPromptSubmit", "session_id": SID, "cwd": str(repo)}
+    for content in ("", "ab" * 16, "../../etc/passwd", "x" * 5000):
+        (repo / ".te-sidecall").write_text(content)
+        assert host.prepare(base, env)["session_id"] == SID
+    # A registered token that names another directory does not cover this one.
+    other = _side_dir(tmp_path / "s", tmp_path / "te-side-real", token="cd" * 16)
+    (repo / ".te-sidecall").write_text("cd" * 16)
     assert host.prepare(base, env)["session_id"] == SID
+    assert host.prepare(dict(base, cwd=other), env)["session_id"] == ""
+    # Once the call has removed its entry, its directory is no side call either.
+    os.remove(os.path.join(str(tmp_path / "s"), "muse-sidecalls", "cd" * 16))
+    assert host.prepare(dict(base, cwd=other), env)["session_id"] == SID
 
 
 def test_a_tool_event_is_filed_under_the_session_s_directory(tmp_path):
@@ -383,12 +471,10 @@ def test_detection(tmp_path, monkeypatch):
 
 # ---- through the hook entry point -------------------------------------------------------------
 def test_a_side_call_s_own_session_is_left_alone(tmp_path):
-    side = tmp_path / "te-side-1"
-    side.mkdir()
-    (side / ".te-sidecall").write_text("")
+    side = _side_dir(tmp_path / "state", tmp_path / "te-side-1")
     env = _env(tmp_path / "state", tmp_path / "d")
     for event in ("SessionStart", "UserPromptSubmit", "SessionEnd"):
-        assert _call(env, {"hook_event_name": event, "session_id": SID, "cwd": str(side),
+        assert _call(env, {"hook_event_name": event, "session_id": SID, "cwd": side,
                            "turn_id": "t", "source": "startup", "prompt": "x"}) == {}
     assert not os.path.exists(tmp_path / "state" / "repos")
 
@@ -425,8 +511,12 @@ def test_a_side_call_runs_with_no_tool_and_its_prompt_in_a_file(monkeypatch):
 
     def fake_run(cmd, **kw):
         pf = cmd[cmd.index("--prompt-file") + 1]
-        seen.append(dict(kw, cmd=cmd, prompt=open(pf, encoding="utf-8").read(),
-                         marker=os.path.isfile(os.path.join(kw["cwd"], ".te-sidecall"))))
+        token = open(os.path.join(kw["cwd"], ".te-sidecall"), encoding="ascii").read()
+        entry = os.path.join(paths.state_root(), "muse-sidecalls", token)
+        seen.append(dict(kw, cmd=cmd, prompt=open(pf, encoding="utf-8").read(), entry=entry,
+                         registered=open(entry, encoding="utf-8").read(),
+                         mode=os.stat(entry).st_mode & 0o777,
+                         side=hosts.Muse()._is_sidecall(kw["cwd"], os.environ)))
         out = "\n".join(json.dumps(x) for x in (
             {"method": "view/item", "params": {"kind": "assistant_message", "text": "draft"}},
             {"kind": "run.usage", "usage": {"input_tokens": 900, "cached_tokens": 100,
@@ -441,7 +531,10 @@ def test_a_side_call_runs_with_no_tool_and_its_prompt_in_a_file(monkeypatch):
     cmd = s["cmd"]
     assert cmd[:3] == ["/n/node", "/n/muse.js", "exec"]
     assert all(prompt not in c for c in cmd)               # not on the command line
-    assert s["prompt"] == prompt and s["marker"]
+    assert s["prompt"] == prompt
+    # While it runs, its directory is registered as a side call's, privately; then it is not.
+    assert s["side"] and s["registered"] == os.path.realpath(s["cwd"]) and s["mode"] == 0o600
+    assert not os.path.exists(s["entry"])
     for flag in ("--preset", "--no-session-log", "--json"):
         assert flag in cmd
     assert cmd[cmd.index("--preset") + 1] == "empty"
@@ -454,20 +547,20 @@ def test_a_side_call_runs_with_no_tool_and_its_prompt_in_a_file(monkeypatch):
 
 
 @pytest.mark.real_sidecalls
-def test_a_build_that_refuses_preset_gets_the_fallback_flags(monkeypatch):
+def test_a_build_that_refuses_a_flag_gets_no_weaker_retry(monkeypatch):
+    """The flags that leave the run with no tool are not dropped to get an answer: a build
+    that refuses one answers nothing, and its registry entry is still removed."""
     monkeypatch.setattr(sidecall, "program", lambda cli: [cli])
     cmds = []
 
     def fake_run(cmd, **kw):
         cmds.append(cmd)
-        if "--preset" in cmd:
-            return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="unknown flag")
-        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(
-            {"kind": "run_terminal", "text": "ok"}), stderr="")
+        return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="unknown flag --preset")
 
     monkeypatch.setattr(sidecall.subprocess, "run", fake_run)
-    assert sidecall.muse_call("p")[0] == "ok"
-    assert len(cmds) == 2 and "--disable-shell" in cmds[1] and "--disable-write" in cmds[1]
+    assert sidecall.muse_call("p") == ("", None)
+    assert len(cmds) == 1 and "--preset" in cmds[0]
+    assert os.listdir(os.path.join(paths.state_root(), "muse-sidecalls")) == []
 
 
 def test_exec_replies_in_either_line_form():

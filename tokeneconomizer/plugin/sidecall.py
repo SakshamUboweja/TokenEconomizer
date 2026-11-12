@@ -50,11 +50,11 @@ so no extra API key is needed and the call is billed where the session is:
     `TE_DROID_SIDECALL=1`): Droid writes a session log of its own for the call, and cannot be
     left with no tool at all. Its usage is read from the call's result or from the settings file
     beside that log.
-  * Muse Code: `muse exec --json --no-session-log --preset empty --max-model-steps 1
-    --prompt-file <file>` in a throwaway directory, on the person's default model, with no
-    built-in tool (`MUSE_FLAGS`). OFF unless `muse_sidecall` is on. Muse clears its hooks'
-    environment, so a marker file in that directory, not `TE_SIDECALL`, keeps the plugin's own
-    hooks out of the nested session.
+  * Muse Code: `muse exec` with `MUSE_FLAGS` (`--preset empty`: no built-in tool; one model
+    step; no session log) and the prompt in a file, in a throwaway directory, on the person's
+    default model. OFF unless `muse_sidecall` is on. Muse clears its hooks' environment, so a
+    one-time token in that directory, not `TE_SIDECALL`, keeps the plugin's own hooks out of the
+    nested session.
 
 Every side call but Hermes's runs with `TE_SIDECALL=1`, which the plugin's hook entry point treats as "do
 nothing": without it the nested agent would run this plugin's hooks and recurse. A call that
@@ -877,14 +877,14 @@ def muse_enabled(config=None):
 # A Muse side call only answers, and its prompt quotes what the session ran, so it must not be
 # able to act. `--preset empty` (changelog 1.4.8) starts the run with no built-in tool;
 # `--disable-request-user-input` (1.4.9) and `--disable-reminders` (1.4.3) keep it to one
-# answer; `--no-session-log` writes no session; `--max-model-steps 1` allows one model call, so
-# a tool call could not be answered. Never `--yolo`, `--trust-workspace` or
-# `--disable-approval`: the call runs sandboxed, with approvals on, in an untrusted directory.
+# answer; `--no-session-log` writes no session; `--max-model-steps 1` allows one model call.
+# Never `--yolo`, `--trust-workspace` or `--disable-approval`: the call runs sandboxed, with
+# approvals on, in an untrusted directory. `--preset empty` leaves the tools of the MCP servers
+# the person configured (Muse documents no per-run switch for those), which is one reason the
+# calls are off by default. A build that refuses any of these flags (exit 2, a usage error) gets
+# no second, weaker run: the call answers nothing, and errors.log says why.
 MUSE_FLAGS = ("exec", "--json", "--no-session-log", "--preset", "empty", "--disable-reminders",
               "--disable-request-user-input", "--max-model-steps", "1")
-# Where a build refuses `--preset` (exit 2, a usage error): the tools that write or run.
-MUSE_FALLBACK_FLAGS = ("exec", "--json", "--no-session-log", "--disable-write",
-                       "--disable-shell", "--max-model-steps", "1")
 
 
 def muse_call(prompt, model="", cli="muse", timeout=TIMEOUT_S):
@@ -893,26 +893,38 @@ def muse_call(prompt, model="", cli="muse", timeout=TIMEOUT_S):
 
     The prompt goes in a file (`--prompt-file`), not on the command line, where other users'
     `ps` would show it. Muse runs a plugin's hooks in `exec` sessions too, and clears their
-    environment, so `TE_SIDECALL` cannot reach them: the directory holds a `.te-sidecall`
-    marker instead, and `hosts.Muse.prepare` leaves a session started there alone. Usage is
+    environment, so `TE_SIDECALL` cannot reach them. Instead the directory holds a
+    `.te-sidecall` marker naming a one-time token, registered under the plugin's state root
+    while the call runs, and `hosts.Muse.prepare` leaves a session started there alone. Usage is
     read from the run's `run.usage` line where it prints one."""
+    import secrets
     from .hosts import Muse
+    from .paths import state_root
+    token = secrets.token_hex(16)
+    registry = os.path.join(state_root(), "muse-sidecalls")
+    entry = os.path.join(registry, token)
     with tempfile.TemporaryDirectory(prefix="te-side-", ignore_cleanup_errors=True) as cwd:
-        with open(os.path.join(cwd, Muse.SIDECALL_MARK), "w", encoding="utf-8") as fh:
-            fh.write("TokenEconomizer side call\n")
-        prompt_file = os.path.join(cwd, "prompt.txt")
-        with open(prompt_file, "w", encoding="utf-8") as fh:
-            fh.write(prompt)
-        out = None
-        for flags in (MUSE_FLAGS, MUSE_FALLBACK_FLAGS):
-            cmd = [*program(cli), *flags]
+        try:
+            os.makedirs(registry, mode=0o700, exist_ok=True)
+            fd = os.open(entry, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(os.path.realpath(cwd))
+            with open(os.path.join(cwd, Muse.SIDECALL_MARK), "w", encoding="ascii") as fh:
+                fh.write(token)
+            prompt_file = os.path.join(cwd, "prompt.txt")
+            with open(prompt_file, "w", encoding="utf-8") as fh:
+                fh.write(prompt)
+            cmd = [*program(cli), *MUSE_FLAGS]
             if model:
                 cmd += ["--model", model]
             cmd += ["--prompt-file", prompt_file]
             out = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
                                  timeout=timeout, env=_env(), cwd=cwd, stdin=subprocess.DEVNULL)
-            if out.returncode != 2:
-                break
+        finally:
+            try:
+                os.remove(entry)
+            except OSError:
+                pass
     text, usage = trace.muse_exec_reply(out.stdout)
     if not text:
         _no_reply("muse", out)

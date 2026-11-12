@@ -749,16 +749,24 @@ was not.)
 * **Tool events report the tool's own directory as `cwd`;** the adapter keeps the session's
   directory from its first hook, so a call run elsewhere stays with this repository.
 * **Background work.** Muse stops the processes a plugin hook leaves running once it returns
-  (changelog 1.4.8). The `SessionEnd` hook is therefore asynchronous, and folds the session
-  inside the hook (`Host.fold_at_end`), along with any session whose earlier fold was cut short.
-  The detached jobs a session start launches (a pending fold, the repository map's refresh, a
-  judge job) may be stopped the same way; a stopped fold is picked up at a later session's end.
-* **Tool pruning** is not available: Muse's tool switches (`--disable-*`, `--preset`) are launch
-  flags, and its MCP `disabled_tools` is recorded but not acted on.
-* **Side call** (off until `muse_sidecall` is on): `muse exec --json --no-session-log --preset
-  empty --max-model-steps 1 --prompt-file <file>` in a throwaway directory holding a
-  `.te-sidecall` marker, which `Muse.prepare` honours because `TE_SIDECALL` cannot reach Muse's
-  hooks. The flags that leave the run with no tool are in the changelog only.
+  (changelog 1.4.8). So the session is folded inside its `SessionEnd` hook, within a time budget,
+  along with any session whose earlier fold was cut short (`Host.stops_background`); the loop
+  guard asks no judge (a detached job), and the history import is not started from a hook. The
+  manifest marks `SessionEnd` asynchronous, which is unverified: Muse documents asynchronous
+  hooks as running in the background, not that it waits for one at exit. The detached jobs a
+  session start still launches (a pending fold, the repository map's refresh) may be stopped; a
+  stopped fold is picked up at a later session's end.
+* **Tool pruning** is not available: Muse documents no per-repository setting that removes a
+  built-in tool; its tool switches (`--disable-*`, `--preset`) are launch flags, and its MCP
+  `disabled_tools` is recorded but not acted on (1.3.0).
+* **Side call** (off until `muse_sidecall` is on): `muse exec` with `sidecall.MUSE_FLAGS`
+  (`--preset empty`, one model step, no session log) and `--prompt-file`, in a throwaway
+  directory whose `.te-sidecall` marker names a one-time token registered under the state root
+  while the call runs; `Muse.prepare` honours it because `TE_SIDECALL` cannot reach Muse's
+  hooks. The flags that leave the run with no tool are in the changelog only, and
+  `--preset empty` keeps configured MCP tools; a build that refuses a flag gets no weaker retry.
+* **Notices.** A `systemMessage` from a hook that completes while no turn runs shows nothing, so
+  the session-start notices (facts added, side calls paused) are not seen on Muse.
 * **Offline, tested here:** `tests/test_muse.py` and the guard test in `tests/test_live_hooks.py`.
   `docs/MUSE.md` lists what a live run has to confirm.
 
@@ -902,8 +910,10 @@ open-vocabulary. On a repository you do not trust, leave micro-skills off (the d
 * **Factory Droid (experimental)** — micro-skills, the loop guard and session cost, on 0.233.0
   (macOS). No tool pruning: the TUI has no persistent per-tool setting (Factory issue #65). Side
   calls are off until `droid_sidecall` is on; see `docs/DROID.md`.
-* **Muse Code (experimental)** — micro-skills, the loop guard and session cost, built from Meta's
-  documentation and not yet run against a real `muse`. No tool pruning. Hooks see a cleared
+* **Muse Code (experimental)** — micro-skills, the loop guard's rule backstop and session cost,
+  built from Meta's documentation and not yet run against a real `muse`. No tool pruning, no
+  loop-guard judge, and no history import started from a hook (Muse stops a hook's background
+  processes; the session's fold runs inside its `SessionEnd` hook). Hooks see a cleared
   environment, so settings come from the config file. Side calls are off until `muse_sidecall`
   is on. macOS and Linux only (the hook wrappers are POSIX shell); see `docs/MUSE.md`.
 * **Known gaps:**

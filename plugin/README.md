@@ -654,9 +654,10 @@ and `~/.tokeneconomizer/bin/te --host muse doctor`.
 ~/.tokeneconomizer/bin/te --host muse history import
 ```
 
-**What works.** Micro-skills, the loop guard, the repository map and session cost (Muse's models
-are priced on the labelled fallback). **What does not:** tool pruning (Muse has no
-per-repository tool setting). **Settings** come from the config file only: Muse clears its hooks'
+**What works.** Micro-skills, the loop guard's rule backstop and session cost (Muse's models are
+priced on the labelled fallback). **What does not:** tool pruning (Muse documents no
+per-repository tool setting), and the guard's model judge (a detached job, which Muse stops).
+The repository map is unverified, and the history import runs only from a terminal. **Settings** come from the config file only: Muse clears its hooks'
 environment, so `TE_*` variables do not reach them. **Model calls** run `muse exec` with no
 built-in tool and are off until `config set muse_sidecall=on`.
 

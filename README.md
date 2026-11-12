@@ -198,8 +198,9 @@ muse plugins approve tokeneconomizer
 
 Start a new Muse session (approved hooks load in the next one) and run
 `~/.tokeneconomizer/bin/te --host muse status` from a terminal in the repository. Muse has no
-per-repository tool setting, so tool pruning stays off, and the plugin's own model calls stay
-off until `muse_sidecall` is on. See **[`docs/MUSE.md`](docs/MUSE.md)**.
+per-repository tool setting it documents, so tool pruning stays off; the loop guard redirects
+only at its rule backstop (Muse stops a hook's background jobs, the judge among them); and the
+plugin's own model calls stay off until `muse_sidecall` is on. See **[`docs/MUSE.md`](docs/MUSE.md)**.
 
 **Cursor Agent** (experimental)
 
@@ -307,7 +308,7 @@ uninstalling, using Copilot with your own model key, and troubleshooting.
 | Hermes Agent (experimental) | 0.22.5 | not tested |
 | Antigravity CLI (experimental) | agy 1.5.1, macOS and Linux | not tested |
 | Factory Droid (experimental) | 0.233.0, macOS (below) | not tested |
-| Muse Code (experimental) | built against the 1.4.14 documentation; not yet run live (below) | not tested |
+| Muse Code (experimental) | built from the 1.4.14 manual and the SDK guides (checked by Meta against 1.3.0); not yet run live (below) | not tested |
 
 The commands above were tested on the oldest and newest version in each range; newer versions
 have not been tested yet.
@@ -404,7 +405,7 @@ are these settings:
 | *r* | `loopguard_nudges` | 1 | redirects per turn before the guard only tells you |
 | *b* | `loopguard.backstop_mult` | 2.5 | how many times its usual length a churning turn may run before it is redirected without the judge |
 | | `droid_sidecall` | off | on Droid, allow the plugin's own model calls, which run `droid exec` |
-| | `muse_sidecall` | off | on Muse Code, allow the plugin's own model calls, which run `muse exec` with no built-in tool |
+| | `muse_sidecall` | off | on Muse Code, allow the plugin's own model calls, which run `muse exec` with no built-in tool (MCP tools you configured stay) |
 
 Change them with `config set`, shown here in Claude Code's form (other agents type it as in
 [Everyday commands](#everyday-commands)):
@@ -465,7 +466,7 @@ what it can leave out differs:
 | Hermes Agent | nothing yet | — |
 | Antigravity CLI | nothing yet | — |
 | Factory Droid | nothing (no persistent per-tool setting in the TUI) | — |
-| Muse Code | nothing (no per-repository tool setting) | — |
+| Muse Code | nothing (no documented per-repository tool setting) | — |
 
 Tool pruning adds only its own entries and never touches deny rules you wrote; a settings file it
 creates is kept out of git (`.git/info/exclude`). On Claude Code, the session-start line that says

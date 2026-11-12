@@ -103,13 +103,14 @@ def _envelopes(obj):
         return []
     if "retained_frame" in obj:
         out = []
-        for child in obj.get("children") or []:
+        children = obj.get("children")
+        for child in children if isinstance(children, list) else []:
             raw = child.get("record_json") if isinstance(child, dict) else None
             if not isinstance(raw, str):
                 continue
             try:
                 ev = json.loads(raw)
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             if isinstance(ev, dict) and "payload" in ev:
                 out.append(ev)
@@ -131,7 +132,7 @@ def muse_records(path):
                     continue
                 try:
                     obj = json.loads(line)
-                except ValueError:
+                except (ValueError, RecursionError):   # deep nesting raises the latter
                     continue
                 out.extend(_envelopes(obj))
     except (OSError, TypeError, ValueError):
@@ -234,7 +235,7 @@ def _args(raw):
             return {}
         try:
             val = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):  # the model wrote it: any text at all
             return {"raw": raw}
         return val if isinstance(val, dict) else {"raw": raw}
     return {}
@@ -281,7 +282,8 @@ def _claude_lines(records, cwd):
             model = _str(ev.get("model")) or model
         elif kind == "assistant_tool_calls_committed":
             blocks = []
-            for call in ev.get("tool_calls") or []:
+            calls = ev.get("tool_calls")
+            for call in calls if isinstance(calls, list) else []:
                 if not isinstance(call, dict):
                     continue
                 cid = _str(call.get("call_id")) or _str(call.get("id"))
@@ -295,7 +297,8 @@ def _claude_lines(records, cwd):
                                                           "content": blocks}}
         elif kind == "tool_result_batch_committed":
             blocks = []
-            for res in ev.get("results") or []:
+            results = ev.get("results")
+            for res in results if isinstance(results, list) else []:
                 if not isinstance(res, dict) or not _str(res.get("tool_call_id")):
                     continue
                 text = res.get("text") if isinstance(res.get("text"), str) else ""
@@ -443,17 +446,6 @@ def muse_sessions(root=None, env=None):
     return rows
 
 
-def muse_ended_since(path, since):
-    """Has the log a `session.end` record written at or after `since` (epoch seconds)?"""
-    for rec in reversed(muse_records(path)):
-        if rec.get("payload_type") != "session.end":
-            continue
-        at = rec.get("recorded_at")
-        if isinstance(at, (int, float)) and not isinstance(at, bool) and at / 1e6 >= since:
-            return True
-    return False
-
-
 def _usage_from(d):
     """A `run.usage` / token-usage object (snake or camel case) as the four counts, or None."""
     if not isinstance(d, dict):
@@ -487,7 +479,7 @@ def muse_exec_reply(stdout):
             continue
         try:
             obj = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         if not isinstance(obj, dict):
             continue
