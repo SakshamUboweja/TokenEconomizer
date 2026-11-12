@@ -999,7 +999,12 @@ def _recent_host(cwd):
 
 
 def main(argv=None):
-    args = build_parser().parse_args(argv)
+    ap = build_parser()
+    args = ap.parse_args(argv)
+    # A typo in --cwd must not create state for a directory that does not exist. The internal
+    # fold and judge keep running for a checkout removed after its session ended.
+    if args.fn not in (cmd_fold, cmd_judge) and not os.path.isdir(args.cwd):
+        ap.error(f"--cwd {args.cwd!r} is not a directory")
     if args.host is None:
         args.host = hosts.default_host(recent=_recent_host(args.cwd))
     try:
