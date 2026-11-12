@@ -20,26 +20,26 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import adapter as live_adapter
 from .denylist import CODEX_TOGGLES, codex_features_list, write_json as _write_json
-from .sidecall import claude_cli, claude_flags, claude_json, program
+from .sidecall import claude_cli, claude_flags, claude_json, copilot_model, program, sidecall_env
 
 
-def verify_copilot(repo_root, servers, cli="copilot"):
+def verify_copilot(repo_root, servers):
     """{server: tools still in the request} for a session started in `repo_root`, by the local
     capture (no model call); None if no request could be captured."""
-    body = copilot_capture(cwd=repo_root, cli=cli)
+    body = copilot_capture(cwd=repo_root)
     if not body:
         return None
     names = _request_tools(body)
     return {s: sum(1 for n in names if n and n.startswith(s + "-")) for s in servers}
 
 
-def verify_codex(repo_root, capabilities, cli="codex", timeout=30):
+def verify_codex(repo_root, capabilities):
     """What `codex features list`, run in the repository, says about the applied toggles:
     {feature: enabled} for the features those capabilities switch off, or None when the CLI
     is unavailable. Free: it reads configuration and calls no model."""
     feats = [k for c in capabilities for t, k, v in CODEX_TOGGLES.get(c, ())
              if t == "features"]
-    out = codex_features_list(repo_root, cli, timeout) if feats else None
+    out = codex_features_list(repo_root) if feats else None
     if out is None:
         return None
     state = {}
@@ -50,13 +50,13 @@ def verify_codex(repo_root, capabilities, cli="codex", timeout=30):
     return state or None
 
 
-def _init_tools(extra_args, cli=None, timeout=60):
+def _init_tools(timeout=60):
     """Tool list from a `claude -p` session's init event; the process is killed right after it,
     before the model is asked anything."""
-    cli = cli or claude_cli()
-    env = dict(os.environ, TE_SIDECALL="1")
+    cli = claude_cli()
+    env = sidecall_env()
     cmd = [cli, "-p", "Reply with OK", "--output-format", "stream-json", "--verbose",
-           "--model", "haiku", "--max-turns", "1"] + claude_flags(cli) + list(extra_args)
+           "--model", "haiku", "--max-turns", "1"] + claude_flags(cli)
     with tempfile.TemporaryDirectory(prefix="te-probe-", ignore_cleanup_errors=True) as cwd:
         p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, encoding="utf-8", errors="replace", env=env,
@@ -145,7 +145,6 @@ def copilot_capture(extra_args=(), cwd=None, cli="copilot", timeout=90):
     th.start()
     # The person's own model, when the environment names one: Copilot shapes its built-in tools
     # by model family (`edit`/`create` for Claude models, `apply_patch` for GPT ones).
-    from .sidecall import copilot_model
     # A router's `provider/` prefix (OpenRouter: `anthropic/claude-haiku-4.5`) is not part of
     # the id Copilot recognises.
     model = (copilot_model() or "gpt-5.4").split("/", 1)[-1]
@@ -189,10 +188,10 @@ def _copilot_version(cli="copilot"):
         return None
 
 
-def refresh_catalog(state_root, cli=None, host="claude"):
+def refresh_catalog(state_root, host="claude"):
     """Record the tool list a fresh session loads on this machine."""
     if host == "copilot":
-        body = copilot_capture(cli=cli or "copilot")
+        body = copilot_capture()
         tools = [t for t in _request_tools(body) if t]
         if not tools:
             raise RuntimeError("could not capture the tool list of a `copilot -p` request")
@@ -202,7 +201,7 @@ def refresh_catalog(state_root, cli=None, host="claude"):
         return path, sorted(tools)
     if host != "claude":
         raise RuntimeError(f"no catalog probe for {host}")
-    tools, version = _init_tools([], cli=cli)
+    tools, version = _init_tools()
     if not tools:
         raise RuntimeError("could not read the tool list from a `claude -p` init event")
     path = live_adapter.catalog_path(state_root, "claude")
@@ -213,7 +212,7 @@ def refresh_catalog(state_root, cli=None, host="claude"):
 
 def _prompt_tokens(extra_args, cli=None, timeout=180):
     cli = cli or claude_cli()
-    env = dict(os.environ, TE_SIDECALL="1")
+    env = sidecall_env()
     cmd = [cli, "-p", "Reply with exactly: OK", "--output-format", "json", "--model", "haiku",
            "--max-turns", "1"] + claude_flags(cli) + list(extra_args)
     # ignore_cleanup_errors: on Windows an MCP server the session started can still hold the cwd
@@ -239,7 +238,7 @@ def _codex_prompt_chars(overrides, cli="codex", timeout=60):
         cmd += ["-c", f"{table}.{key}={value}" if table else f"{key}={value}"]
     with tempfile.TemporaryDirectory(prefix="te-measure-", ignore_cleanup_errors=True) as cwd:
         out = subprocess.run(cmd + ["OK"], capture_output=True, encoding="utf-8", errors="replace",
-                             cwd=cwd, timeout=timeout, env=dict(os.environ, TE_SIDECALL="1"))
+                             cwd=cwd, timeout=timeout, env=sidecall_env())
     # Empty output is a failed probe too: counted as 0, the whole request would read as saved.
     return len(out.stdout) if out.returncode == 0 and out.stdout else None
 

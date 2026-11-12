@@ -90,6 +90,8 @@ class _StubAdapter:
         return frozenset()
     def parse_catalog(self, run_dir_path, agent):
         return {"web_fetch": "fetch a url", "ask_user": "ask the human"}
+    def parse_catalog_with_source(self, run_dir_path, agent):
+        return self.parse_catalog(run_dir_path, agent), "unknown"
 
 
 def test_evidence_untool_drops_after_streak(tmp_path):
@@ -109,12 +111,12 @@ def test_evidence_untool_drops_after_streak(tmp_path):
 
 # ---- the mask must be EARNED, never a prior ---------------------------------
 # The mask comes only from observed disuse: none before the first task has completed, and
-# never one drawn from a static list such as `toolprune.tools.INAPPLICABLE_TOOLS`, which the
-# stage does not read. A static prior would be live from the first rollout, cost zero LLM
-# tokens (so the honest ledger would charge nothing for it) and give a byte-identical keep-set
-# in every cell -- an unpaid, unlearned saving rather than the evidence-gated mechanism. These tests pin that in BOTH domains, because the
-# difference is invisible in aggregate numbers and shows up only as a suspiciously large cost
-# win.
+# never one drawn from a static list of tools deemed inapplicable by construction. A static
+# prior would be live from the first rollout, cost zero LLM tokens (so the honest ledger would
+# charge nothing for it) and give a byte-identical keep-set in every cell -- an unpaid,
+# unlearned saving rather than the evidence-gated mechanism. These tests pin that in BOTH
+# domains, because the difference is invisible in aggregate numbers and shows up only as a
+# suspiciously large cost win.
 from te_bench.adapters import WebBenchAdapter                    # noqa: E402
 from tokeneconomizer.toolprune import tools as reflect                  # noqa: E402
 from fixtures import write_claude_transcript_with_catalog               # noqa: E402

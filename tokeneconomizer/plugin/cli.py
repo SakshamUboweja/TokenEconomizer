@@ -56,9 +56,9 @@ from .context import LiveContext
 from .paths import state_root
 
 
-def _ctx(args, env=None, session_id=None):
+def _ctx(args, session_id=None):
     host = hosts.HOSTS[args.host]()
-    return LiveContext.build(host, args.cwd, env, session_id=session_id)
+    return LiveContext.build(host, args.cwd, None, session_id=session_id)
 
 
 def _unwritable(path):
@@ -100,11 +100,10 @@ def _session_ctx(args, session_id):
     return ctx
 
 
-def _session_note(ctx, env=None):
+def _session_note(ctx):
     """A line when this command runs inside an agent session recorded under another repository
     (the one it started in), else None."""
-    env = os.environ if env is None else env
-    sid = ctx.host.env_session_id(env)
+    sid = ctx.host.env_session_id(os.environ)
     pin = repos.pinned(ctx.root, ctx.host.name, sid) if sid else None
     if pin is None or pin.key == ctx.repo.key:
         return None
@@ -236,7 +235,7 @@ def cmd_status(args):
                       "ended_green_turns": len(env_tracker.resolved_turns)},
         "history": history.summary(ctx),
         "ledger": ledger})
-    if getattr(args, "explain", False):
+    if args.explain:
         out["explanations"] = _status_explanations(ctx, inj, unt, env_tracker,
                                                  out["toolprune"]["applied"])
     if args.json:
@@ -317,26 +316,29 @@ def cmd_microskills(args):
 # ---- toolprune -----------------------------------------------------------------------------
 def _toolprune_show(ctx, unt):
     host = ctx.host.name
+    applied = denylist.applied_for(ctx.store, ctx.repo.root, host)
+    kept = denylist.kept_for(ctx.store, ctx.repo.root, host)
+    # _proposal's subtraction, from the two lists this needs anyway: each reads applied.json.
+    proposal = [t for t in unt.get("proposal", []) if t not in set(applied) | set(kept)]
     print(f"sessions observed: {unt.get('sessions', 0)} ({unt.get('prompts', 0)} prompts)  "
           f"catalog: {unt.get('catalog_source') or 'none yet'}")
     print(f"applied ({denylist.unit(host, plural=True)} this plugin added to "
           f"{denylist.settings_path(ctx.repo.root, host)}): "
-          f"{', '.join(denylist.applied_for(ctx.store, ctx.repo.root, host)) or '-'}")
-    print(f"proposed: {', '.join(_proposal(ctx, unt)) or '-'}")
+          f"{', '.join(applied) or '-'}")
+    print(f"proposed: {', '.join(proposal) or '-'}")
     if unt.get("imported_sessions"):
         print(f"of which {unt['imported_sessions']} from before the plugin "
               f"({unt.get('imported_prompts', 0)} prompts), read from the agent's history")
-    waiting = [t for t in unt.get("needs_apply") or [] if t in _proposal(ctx, unt)]
+    waiting = [t for t in unt.get("needs_apply") or [] if t in proposal]
     if waiting and ctx.config.toolprune == "auto":
         print(f"waiting for `toolprune apply`: {', '.join(waiting)} (the evidence for them "
               f"includes sessions from before the plugin, so `auto` does not write them)")
     pending = [t for t in (unt.get("auto_pending") or {}).get("items") or []
-               if t in _proposal(ctx, unt)]
+               if t in proposal]
     if pending and ctx.config.toolprune == "auto":
         print(f"pending: written once this repository's sessions have been idle "
               f"{ctx.config.toolprune_quiet_minutes} minutes, so that no conversation you "
               f"resume re-reads its cached prompt (`toolprune apply` writes it now)")
-    kept = denylist.kept_for(ctx.store, ctx.repo.root, host)
     if kept:
         print(f"kept, as you gave them back (`toolprune apply NAME` removes one again): "
               f"{', '.join(kept)}")
@@ -369,8 +371,9 @@ def _toolprune_show(ctx, unt):
         print(f"how long each tool has gone unused (a tool never used is left out after "
               f"{cfg.toolprune_evidence} prompts over {cfg.toolprune_min_sessions}+ sessions, "
               f"or after {cfg.toolprune_sessions} sessions):")
+        used_tools = set(unt.get("used_tools", []))
         for t, n in sorted(streaks.items(), key=lambda kv: (-kv[1], -prompts.get(kv[0], 0)))[:30]:
-            used = "used" if t in set(unt.get("used_tools", [])) else ""
+            used = "used" if t in used_tools else ""
             print(f"  {n:4d} sessions {prompts.get(t, n):5d} prompts  {t} {used}")
     if not unt.get("catalog_source") or unt.get("catalog_source") == "observed":
         if os.path.exists(os.path.join(ctx.root, "hosts", host, "catalog.json")):
@@ -500,20 +503,19 @@ def cmd_toolprune(args):
         path, tools = toolcheck.refresh_catalog(state_root(), host=host)
         print(f"{len(tools)} tools recorded in {path}:\n  " + ", ".join(tools))
         return 0
-    if action == "measure":
-        tools = args.tools or _proposal(ctx, unt) or denylist.applied_for(
-            ctx.store, ctx.repo.root, host)
-        if not tools:
-            print("no proposal to measure")
-            return 1
-        try:
-            res = toolcheck.measure(tools, host=host)
-        except RuntimeError as e:
-            print(f"not measured: {e}")
-            return 1
-        print(json.dumps(res, indent=2))
-        return 0
-    return 2
+    # measure: argparse's choices leave no other action.
+    tools = args.tools or _proposal(ctx, unt) or denylist.applied_for(
+        ctx.store, ctx.repo.root, host)
+    if not tools:
+        print("no proposal to measure")
+        return 1
+    try:
+        res = toolcheck.measure(tools, host=host)
+    except RuntimeError as e:
+        print(f"not measured: {e}")
+        return 1
+    print(json.dumps(res, indent=2))
+    return 0
 
 
 # ---- repomap ------------------------------------------------------------------------------
@@ -657,9 +659,14 @@ def _print_history(ctx, doc):
               + ("" if ctx.config.history_import else " (history_import is off)"))
         return
     print(f"{ctx.repo.label}: {history.describe(doc, ctx.host.name) or doc.get('state')}")
-    skipped = doc.get("skipped") if isinstance(doc.get("skipped"), dict) else {}
-    if doc.get("over_limit"):
-        skipped = dict(skipped, older_than_the_newest=doc["over_limit"])
+    _print_left_out(doc.get("skipped"), doc.get("over_limit"))
+
+
+def _print_left_out(skipped, over_limit):
+    """The sessions an import leaves out, by reason, if any."""
+    skipped = skipped if isinstance(skipped, dict) else {}
+    if over_limit:
+        skipped = dict(skipped, older_than_the_newest=over_limit)
     if skipped:
         print("left out: " + ", ".join(f"{k} {v}" for k, v in sorted(skipped.items())))
 
@@ -678,10 +685,7 @@ def cmd_history(args):
         print(f"{len(p['sessions'])} earlier session(s) of {ctx.repo.label} would be read"
               + (f", oldest {_when(p['sessions'][0]['started'])}, newest "
                  f"{_when(p['sessions'][-1]['started'])}" if p["sessions"] else ""))
-        skipped = dict(p["skipped"], **({"older_than_the_newest": p["over_limit"]}
-                                        if p["over_limit"] else {}))
-        if skipped:
-            print("left out: " + ", ".join(f"{k} {v}" for k, v in sorted(skipped.items())))
+        _print_left_out(p["skipped"], p["over_limit"])
         why = history._refusal(ctx, False)
         if why:
             print(f"not importable now: {why}")
@@ -804,14 +808,11 @@ def cmd_doctor(args):
     ok = sys.version_info >= (3, 10)
     print(f"python      {sys.version.split()[0]} {'ok' if ok else '(needs >= 3.10)'}")
     root = state_root()
-    try:
-        os.makedirs(root, exist_ok=True)
-        probe = os.path.join(root, ".write-test")
-        open(probe, "w", encoding="utf-8").close()
-        os.remove(probe)
+    why = _unwritable(root)
+    if why is None:
         print(f"state root  {root} (writable)")
-    except OSError as e:
-        print(f"state root  {root} NOT writable: {e}")
+    else:
+        print(f"state root  {root} NOT writable: {why}")
         ok = False
     import shutil as _sh
     # Only the agents installed here: a Codex-only machine has no Claude Code catalog to probe.
@@ -827,7 +828,7 @@ def cmd_doctor(args):
         pause = sidecall.paused(h, root)
         if pause:
             print(f"{h:11s} model calls paused since "
-                  f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(pause['at']))}: "
+                  f"{_when(pause['at'])}: "
                   f"`{sidecall.call_name(h)}` said it is not signed in; "
                   f"`config set microskills=on` (or `loopguard=on`) tries again")
     if "claude" in agents:
@@ -840,14 +841,13 @@ def cmd_doctor(args):
                   f"(an untrusted project's .codex/config.toml is ignored)")
     if "copilot" in agents:
         from urllib.parse import urlparse
-        from .sidecall import copilot_model
         cat = os.path.join(root, "hosts", "copilot", "catalog.json")
         print(f"copilot     catalog {'present' if os.path.exists(cat) else 'not probed'}")
         base = os.environ.get("COPILOT_PROVIDER_BASE_URL")
         route = (f"BYOK {os.environ.get('COPILOT_PROVIDER_TYPE') or 'openai'} at "
                  f"{urlparse(base).netloc or base}" if base else "Copilot subscription")
         print(f"copilot     {route}; side calls and `probe` use model "
-              f"{copilot_model() or '(Copilot default)'}")
+              f"{sidecall.copilot_model() or '(Copilot default)'}")
         if base:
             print("copilot     note: Copilot does not pass COPILOT_PROVIDER_* to the plugin's "
                   "hooks, so its model calls (micro-skills' proposer, the loop guard's judge) "
@@ -977,14 +977,13 @@ def build_parser():
 def _recent_host(cwd):
     """The agent whose state for this repository changed last, or None: from a plain terminal,
     a Codex or Pi user means their own agent's state without typing `--host`."""
-    from .paths import repo_identity, repo_state_dir
     try:
-        repo = repo_identity(cwd)
+        repo = paths.repo_identity(cwd)
     except OSError:
         return None
     seen = {}
     for name in hosts.HOSTS:
-        d = repo_state_dir(repo, name)
+        d = paths.repo_state_dir(repo, name)
         if os.path.isdir(d):
             seen[name] = max([os.path.getmtime(d)] + [os.path.getmtime(os.path.join(d, f))
                                                       for f in os.listdir(d)])
@@ -998,8 +997,7 @@ def main(argv=None):
     try:
         return args.fn(args) or 0
     finally:
-        from .paths import secure_root
-        secure_root()
+        paths.secure_root()
 
 
 if __name__ == "__main__":

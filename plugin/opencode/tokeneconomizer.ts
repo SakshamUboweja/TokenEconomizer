@@ -59,17 +59,13 @@ const disabled = () => truthy(process.env.TE_SIDECALL) || truthy(process.env.TE_
 /** `opencode run` is headless: one prompt, then the process ends. */
 const mode = () => (process.env.TE_OPENCODE_MODE ?? (process.argv.includes("run") ? "run" : "tui"));
 
-/** The program and arguments that run a launcher. The launchers are POSIX `sh`, which Windows
- * cannot start; there the bootstrap they run is started with Python itself (`TE_PYTHON`, else
- * `python`). */
-function launch(
-  script: string,
-  args: string[],
-  platform: string = process.platform,
-): [string, string[]] {
-  if (platform !== "win32") return [join(SCRIPTS, script), args];
-  const kind = script === "te-hook" ? "hook" : "cli";
-  return [process.env.TE_PYTHON || "python", [join(SCRIPTS, "te_bootstrap.py"), kind, ...args]];
+/** The program and arguments that run the hook launcher. The launchers are POSIX `sh`, which
+ * Windows cannot start; there the bootstrap they run is started with Python itself (`TE_PYTHON`,
+ * else `python`). */
+function launch(): [string, string[]] {
+  const args = ["--host", "opencode"];
+  if (process.platform !== "win32") return [join(SCRIPTS, "te-hook"), args];
+  return [process.env.TE_PYTHON || "python", [join(SCRIPTS, "te_bootstrap.py"), "hook", ...args]];
 }
 
 const childEnv = () => ({ ...process.env, PYTHONUTF8: "1", TE_OPENCODE_MODE: mode() });
@@ -87,7 +83,7 @@ function hook(payload: Record<string, unknown>): Promise<any> {
     let out = "";
     let child;
     try {
-      const [program, argv] = launch("te-hook", ["--host", "opencode"]);
+      const [program, argv] = launch();
       child = spawn(program, argv, {
         ...HIDDEN,
         env: childEnv(),
@@ -125,7 +121,7 @@ function hook(payload: Record<string, unknown>): Promise<any> {
 function hookSync(payload: Record<string, unknown>) {
   if (disabled()) return;
   try {
-    const [program, argv] = launch("te-hook", ["--host", "opencode"]);
+    const [program, argv] = launch();
     spawnSync(program, argv, {
       ...HIDDEN,
       env: childEnv(),

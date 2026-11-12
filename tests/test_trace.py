@@ -295,7 +295,6 @@ def test_a_non_object_line_does_not_stop_a_session_from_being_read(tmp_path):
     assert trace.claude_session_usage(str(p))["input_tokens"] == 5
     r = tmp_path / "rollout.jsonl"
     r.write_text("\n".join(_around_non_objects([meta, count])))
-    assert trace.codex_session_meta(str(r)) == {"cwd": "/w", "cli_version": "1.0"}
     usage = trace.codex_session_usage(str(r))
     assert (usage["input_tokens"], usage["output_tokens"], usage["requests"]) == (6, 3, 1)
     assert copilot_session_cwd(_around_non_objects([start])) == "/repo"
@@ -317,7 +316,7 @@ def test_a_non_object_line_does_not_empty_a_tool_catalog():
     checkpoint = {"type": "session.usage_checkpoint", "data": {"promptCacheBreakState": [
         {"models": {"m": {"tools": [{"name": "view"}]}}}]}}
     text = "\n".join(_around_non_objects([system]))
-    assert trace.parse_tool_catalog_claude(text, snapshot={}) == {"Bash": ""}
+    assert list(_catalog.parse_tool_catalog_claude(text)) == ["Bash"]
     text = "\n".join(_around_non_objects([checkpoint]))
     assert trace.parse_tool_names_copilot(text) == {"view": ""}
 
@@ -326,7 +325,7 @@ def test_the_loop_guard_and_the_capability_audit_skip_a_non_object_line(tmp_path
     from tokeneconomizer.loopguard.state import completed_calls
     from tokeneconomizer.toolprune.codex import inspect_usage
     assert [completed_calls(line, {}) for line in NON_OBJECT_LINES] == [[]] * 4
-    reconnect = {"type": "error", "message": "Reconnecting... 1/5"}
+    search = {"type": "item.completed", "item": {"id": "i1", "type": "web_search"}}
     p = tmp_path / "exec.jsonl"
-    p.write_text("\n".join(_around_non_objects([reconnect])))
-    assert inspect_usage(str(p))["reconnects"] == 1
+    p.write_text("\n".join(_around_non_objects([search])))
+    assert inspect_usage(str(p))["completed"]["web"] == 1

@@ -21,6 +21,7 @@ def _fake_claude(monkeypatch, seen, stdout=None):
         return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(toolcheck.subprocess, "run", run)
+    monkeypatch.setattr(toolcheck, "claude_cli", lambda: "claude")
     monkeypatch.setattr(toolcheck, "claude_flags", lambda cli=None: [])
 
 
@@ -59,6 +60,7 @@ def test_a_probe_that_exits_non_zero_raises_even_with_usage(monkeypatch):
             stderr=err)
 
     monkeypatch.setattr(toolcheck.subprocess, "run", run)
+    monkeypatch.setattr(toolcheck, "claude_cli", lambda: "claude")
     monkeypatch.setattr(toolcheck, "claude_flags", lambda cli=None: [])
     with pytest.raises(RuntimeError, match="exited 1: boom"):
         toolcheck.measure(["mcp__x__y"], cli="claude")
@@ -79,6 +81,7 @@ def _fake_probe(monkeypatch, script):
     is swapped: `toolcheck.subprocess` is the shared module, and on Windows `_kill_tree` starts
     `taskkill` through the same `Popen`."""
     real_popen = subprocess.Popen
+    monkeypatch.setattr(toolcheck, "claude_cli", lambda: "claude")
     monkeypatch.setattr(toolcheck, "claude_flags", lambda cli=None: [])
     monkeypatch.setattr(toolcheck.subprocess, "Popen", lambda cmd, **kw: real_popen(
         [sys.executable, "-c", script] if cmd[0] == "claude" else cmd, **kw))
@@ -88,7 +91,7 @@ def test_the_init_probe_gives_up_on_a_cli_that_prints_nothing(monkeypatch):
     """The deadline has to hold when no line arrives: a probe that hung blocked it for good."""
     _fake_probe(monkeypatch, "import time; time.sleep(5)")
     started = time.monotonic()
-    assert toolcheck._init_tools([], cli="claude", timeout=1) == (None, None)
+    assert toolcheck._init_tools(timeout=1) == (None, None)
     assert time.monotonic() - started < 4
 
 
@@ -97,5 +100,5 @@ def test_the_init_probe_returns_the_tools_when_the_init_event_arrives(monkeypatc
             "claude_code_version": "2.1"}
     _fake_probe(monkeypatch, f"import time; print({json.dumps(init)!r}, flush=True); time.sleep(5)")
     started = time.monotonic()
-    assert toolcheck._init_tools([], cli="claude", timeout=30) == (["Bash", "Read"], "2.1")
+    assert toolcheck._init_tools(timeout=30) == (["Bash", "Read"], "2.1")
     assert time.monotonic() - started < 4

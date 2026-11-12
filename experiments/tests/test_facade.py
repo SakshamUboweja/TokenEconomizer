@@ -2,14 +2,21 @@
 import os
 
 from te_bench.facade import Economizer
-from tokeneconomizer import EconomizerConfig
-from tokeneconomizer.config import InjectionConfig, ToolingConfig, SpiralConfig
+from tokeneconomizer.config import InjectionConfig, ToolingConfig
+from te_bench.config import EconomizerConfig, SpiralConfig
 from te_bench.adapters import SwebenchAdapter
 from fixtures import write_claude_transcript, write_codex_transcript
 
 
 def _runner(prompt, model="agent"):
     return ('{"extractors":[],"facts":[]}', 5.0)
+
+
+def test_defaults_all_off():
+    cfg = EconomizerConfig()
+    assert cfg.injection.enabled is False
+    assert cfg.tooling.enabled is False
+    assert cfg.spiral.enabled is False
 
 
 def test_generic_trimech_end_to_end(tmp_path):

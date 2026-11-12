@@ -19,7 +19,7 @@ tasks.jsonl schema (one JSON object per line, `init` + `task-1..task-20`):
   {"id": "init"|"task-N", "date": "...", "level": "easy|...", "description": "..."}
 
 The `projects/` tree is located by TOKENECONOMIZER_WEBBENCH_PROJECTS (a placeholder you set
-to your Web-Bench checkout) or an explicit `projects_root=`.
+to your Web-Bench checkout).
 """
 import json
 import os
@@ -32,18 +32,17 @@ PROJECTS_ROOT_ENV = "TOKENECONOMIZER_WEBBENCH_PROJECTS"
 class WebBenchAdapter(SwebenchAdapter):
     name = "webbench"
 
-    def __init__(self, project, projects_root=None):
+    def __init__(self, project):
         """`project` is the Web-Bench project name (= a stream, e.g. 'zustand', 'table').
-        `projects_root` locates the `projects/` tree (defaults to the
-        TOKENECONOMIZER_WEBBENCH_PROJECTS env-var placeholder)."""
+        The `projects/` tree comes from the TOKENECONOMIZER_WEBBENCH_PROJECTS env-var
+        placeholder."""
         self.project = project
-        self.projects_root = projects_root or os.environ.get(PROJECTS_ROOT_ENV)
+        self.projects_root = os.environ.get(PROJECTS_ROOT_ENV)
 
     def tasks_path(self):
         if not self.projects_root:
             raise RuntimeError(
-                f"no Web-Bench projects root: set ${PROJECTS_ROOT_ENV} or pass "
-                f"projects_root=.")
+                f"no Web-Bench projects root: set ${PROJECTS_ROOT_ENV}.")
         return os.path.join(self.projects_root, self.project, "tasks.jsonl")
 
     def env_vocabulary(self):
@@ -66,5 +65,5 @@ class WebBenchAdapter(SwebenchAdapter):
                 tid = rec.get("id")
                 if not tid:
                     continue
-                out[tid] = redact_gold_pointers((rec.get("description") or "").strip())[0]
+                out[tid] = redact_gold_pointers((rec.get("description") or "").strip())
         return out

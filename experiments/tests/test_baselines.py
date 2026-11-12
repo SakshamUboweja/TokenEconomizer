@@ -60,7 +60,7 @@ class FakeCtx(scaffolds.ScaffoldContext):
         self.execs, self.copies, self.host_runs, self.logs = [], [], [], []
         self._result = exec_result or (lambda script: _ok())
         super().__init__(
-            profile=profile, container="c1",
+            profile=profile,
             task=task or {"instance_id": "django__django-1", "problem_statement": "x"},
             run_dir=str(tmp_path),
             exec_=self._exec, copy_in=self._copy, host_run=self._host,
@@ -201,7 +201,8 @@ def test_registry_resolves_every_named_scaffold():
 
 def test_no_scaffold_is_not_an_error():
     assert scaffolds.get(None) is None and scaffolds.get("") is None
-    assert scaffolds.for_arm("trimech") is None and scaffolds.for_arm("") is None
+    from te_bench.arms import SCAFFOLD_ARMS
+    assert "trimech" not in SCAFFOLD_ARMS and scaffolds.get(SCAFFOLD_ARMS.get("")) is None
 
 
 def test_unknown_scaffold_names_the_known_ones():
@@ -211,7 +212,8 @@ def test_unknown_scaffold_names_the_known_ones():
 
 
 def test_every_arm_mapping_points_at_a_real_scaffold():
-    for arm, name in scaffolds.ARM_SCAFFOLDS.items():
+    from te_bench.arms import SCAFFOLD_ARMS
+    for arm, name in SCAFFOLD_ARMS.items():
         assert name in scaffolds.SCAFFOLDS, arm
 
 

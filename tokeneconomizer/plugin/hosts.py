@@ -47,13 +47,13 @@ import shlex
 import time
 
 from .. import trace
+from ..trace.codex import PATCH_FILE_RE
 
 _RESPONSE_KEYS = ("stdout", "stderr", "output", "aggregated_output", "formatted_output",
                   "content", "result", "error", "message", "text_result_for_llm")
 _EXIT_RE = re.compile(r"(?im)^\s*(?:exit code|process exited with code)[:\s]+(-?\d+)")
 # Copilot appends this line to every shell result.
 _COPILOT_EXIT_RE = re.compile(r"<shellId: [^>]*?completed with exit code (-?\d+)>")
-_PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$", re.M)
 RESULT_CAP = 20000      # characters of a tool result the guard folds (errors live early)
 # Notices a host shows as progress lines ahead of the hook's JSON (Copilot); `hook.main` writes
 # them and removes the key, so it never reaches an agent as an output field.
@@ -64,15 +64,15 @@ class FoldLater(Exception):
     """A finished session's log cannot be had now but may be later: it stays unfolded."""
 
 
-def response_text(resp, cap=RESULT_CAP):
+def response_text(resp):
     """Best-effort text of a hook's `tool_response`, whatever shape the tool returned."""
     if resp is None:
         return ""
     if isinstance(resp, str):
-        return resp[:cap]
+        return resp[:RESULT_CAP]
     if isinstance(resp, list):
         return "\n".join(x.get("text", "") if isinstance(x, dict) else str(x)
-                         for x in resp)[:cap]
+                         for x in resp)[:RESULT_CAP]
     if isinstance(resp, dict):
         if "structuredPatch" in resp:
             return ""
@@ -83,8 +83,8 @@ def response_text(resp, cap=RESULT_CAP):
                 parts.append(v)
             elif isinstance(v, list):
                 parts.append("\n".join(x.get("text", "") for x in v if isinstance(x, dict)))
-        return "\n".join(parts)[:cap]
-    return str(resp)[:cap]
+        return "\n".join(parts)[:RESULT_CAP]
+    return str(resp)[:RESULT_CAP]
 
 
 def merge_outputs(*outputs):
@@ -96,9 +96,7 @@ def merge_outputs(*outputs):
         for k, v in o.items():
             if k == "systemMessage" and out.get(k):
                 out[k] = out[k] + "\n" + v
-            elif k == "additionalContext" and out.get(k):
-                out[k] = out[k] + "\n\n" + v
-            elif k == "additional_context" and out.get(k):
+            elif k in ("additionalContext", "additional_context") and out.get(k):
                 out[k] = out[k] + "\n\n" + v
             elif k == PROGRESS:
                 out[k] = list(out.get(k) or []) + list(v)
@@ -132,13 +130,20 @@ class Host:
     def cwd(self, p, env):
         return p.get("cwd") or env.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 
+    def prepare(self, payload, env):
+        """The hook payload in the shared contract's shape (Cursor translates its own)."""
+        return payload
+
+    def record_event(self, payload):
+        """Keep what this host's own log does not record (Cursor's spool)."""
+
     def env_session_id(self, env):
         """The session a `te` command runs inside, from its shell's environment ("" if none is
         named). `TE_SESSION_ID` is set by the Pi extension's `/te`."""
         return str(env.get("TE_SESSION_ID") or "")
 
     def turn_key(self, p):
-        return ""
+        return str(p.get("prompt_id") or "")
 
     def is_subagent(self, p):
         return bool(p.get("agent_id"))
@@ -178,13 +183,16 @@ class Host:
     def headless(self, env, transcript=None):
         return False
 
+    # The payload key a PostToolUse result arrives under (Copilot's differs).
+    result_key = "tool_response"
+
     def tool_call(self, p):
         """(tool_name, args, result_text, exit_code_or_None) for a PostToolUse payload, or for
         a PostToolUseFailure one: Claude Code reports a call that failed -- a non-zero exit, a
         refused command, a file that is not there -- only there, with an `error` string
         ("Exit code 2\nls: cannot access ...") and no `tool_response` (2.1.299)."""
         args = p.get("tool_input") if isinstance(p.get("tool_input"), dict) else {}
-        resp = _failure_response(p) or p.get("tool_response")
+        resp = _failure_response(p) or p.get(self.result_key)
         return str(p.get("tool_name") or ""), args, response_text(resp), _exit_code(resp)
 
     # -- the finished session, in the shapes the mechanisms read --------------------------
@@ -319,9 +327,6 @@ class ClaudeCode(Host):
     relays_notices = True
     prompt_context = True
 
-    def turn_key(self, p):
-        return str(p.get("prompt_id") or "")
-
     def tool_call(self, p):
         name, args, text, code = super().tool_call(p)
         if code is None and _failure_response(p) is None:
@@ -401,7 +406,7 @@ class Codex(Host):
         if low == "apply_patch":
             patch = next((v for v in (args.get("input"), args.get("patch"), args.get("command"))
                           if isinstance(v, str)), "")
-            paths = _PATCH_FILE_RE.findall(patch)
+            paths = PATCH_FILE_RE.findall(patch)
             return "apply_patch", {"path": paths[0] if paths else "", "paths": paths}, text, code
         return name, args, text, code
 
@@ -447,9 +452,6 @@ class Pi(Host):
     interrupt = "Press Esc to abort it."
     end_run = "Press Ctrl+C to end the run; a command it started runs on until it finishes."
 
-    def turn_key(self, p):
-        return str(p.get("prompt_id") or "")
-
     def headless(self, env, transcript=None):
         return str(env.get("TE_PI_MODE", "")).strip() in ("print", "json", "rpc")
 
@@ -486,10 +488,6 @@ class OpenCode(Host):
     name = "opencode"
     prompt_context = True              # the plugin appends it to the system prompt
     interrupt = "Press Esc to interrupt it."
-    end_run = "Press Ctrl+C to end the run."
-
-    def turn_key(self, p):
-        return str(p.get("prompt_id") or "")
 
     def headless(self, env, transcript=None):
         return str(env.get("TE_OPENCODE_MODE", "")).strip() == "run"
@@ -517,13 +515,13 @@ class OpenCode(Host):
         opencode has nothing."""
         import subprocess
         from .paths import state_root
-        from .sidecall import program
+        from .sidecall import program, sidecall_env
         if (trace.opencode_prompt_count(transcript_path or "")
                 or not re.fullmatch(r"[\w-]+", session_id or "")):
             return transcript_path
         path = transcript_path or os.path.join(state_root(), "opencode-sessions",
                                                f"{session_id}.json")
-        env = dict(os.environ, TE_SIDECALL="1")
+        env = sidecall_env()
         cwd = cwd if cwd and os.path.isdir(cwd) else None
         tmp = f"{path}.{os.getpid()}.tmp"
         for attempt in range(self.EXPORT_TRIES):
@@ -566,7 +564,6 @@ class Cursor(Host):
     remain unpriced until Cursor exposes per-session usage in a supported interface.
     """
     name = "cursor"
-    prompt_context = False
     relays_notices = True
     interrupt = "Press Esc to stop the Cursor agent."
     end_run = "Press Ctrl+C to end the Cursor Agent CLI run."
@@ -580,14 +577,6 @@ class Cursor(Host):
         "sessionEnd": "SessionEnd",
     }
 
-    def session_id(self, p):
-        return str(p.get("session_id") or p.get("conversation_id") or "")
-
-    def cwd(self, p, env):
-        roots = p.get("workspace_roots")
-        root = roots[0] if isinstance(roots, list) and roots else ""
-        return p.get("cwd") or env.get("CURSOR_PROJECT_DIR") or root or os.getcwd()
-
     def turn_key(self, p):
         return str(p.get("generation_id") or p.get("prompt_id") or "")
 
@@ -596,16 +585,6 @@ class Cursor(Host):
 
     def notice(self, text):
         return {"additional_context": self.relay(text)}
-
-    def transcript(self, p):
-        if p.get("transcript_path"):
-            return p["transcript_path"]
-        sid = self.session_id(p)
-        if not sid:
-            return ""
-        from .paths import state_root
-        safe_id = os.path.basename(sid)
-        return os.path.join(state_root(), "cursor-sessions", safe_id + ".jsonl")
 
     def prepare(self, payload, env):
         p = dict(payload or {})
@@ -744,13 +723,9 @@ class Hermes(Host):
     relays_notices = True
     # Hermes's docs (0.22.5): Ctrl+C on an empty prompt interrupts the agent, twice exits.
     interrupt = "Press Ctrl+C to interrupt it."
-    end_run = "Press Ctrl+C to end the run."
     # A session a fold cannot read is retried at each start in its repository for this long, then
     # folded as unreadable, so one whose row was deleted is not retried for ever.
     FOLD_RETRY_S = 7 * 86400
-
-    def turn_key(self, p):
-        return str(p.get("prompt_id") or "")
 
     def headless(self, env, transcript=None):
         return str(env.get("TE_HERMES_MODE", "")).strip() == "oneshot"
@@ -1132,6 +1107,11 @@ def copilot_home(env=None):
     return env.get("COPILOT_HOME") or os.path.join(os.path.expanduser("~"), ".copilot")
 
 
+def copilot_log(sid, env=None):
+    """Where the Copilot CLI writes session `sid`'s event log."""
+    return os.path.join(copilot_home(env), "session-state", sid, "events.jsonl")
+
+
 class Copilot(Host):
     """The GitHub Copilot CLI, through `plugin/.github/plugin/plugin.json` and its hook file."""
     name = "copilot"
@@ -1140,12 +1120,15 @@ class Copilot(Host):
     # 1.0.102 rebuilds a resumed conversation's first message without it, dropping the facts
     # and missing the prompt cache; the same text given again rebuilds it as it was.
     keeps_start_context = False
+    result_key = "tool_result"
+
+    def turn_key(self, p):
+        return ""
 
     def transcript(self, p):
         # Only Stop carries `transcript_path`; the log's location is fixed by the session id.
         sid = self.session_id(p)
-        return p.get("transcript_path") or (
-            os.path.join(copilot_home(), "session-state", sid, "events.jsonl") if sid else "")
+        return p.get("transcript_path") or (copilot_log(sid) if sid else "")
 
     def cwd(self, p, env):
         return p.get("cwd") or env.get("COPILOT_PROJECT_DIR") or os.getcwd()
@@ -1163,18 +1146,16 @@ class Copilot(Host):
         return any(_PROMPT_FLAG.search(a) for a in _ancestor_args()
                    if "copilot" in a.split(" ", 1)[0])
 
-    def tool_call(self, p):
-        args = p.get("tool_input") if isinstance(p.get("tool_input"), dict) else {}
-        resp = _failure_response(p) or p.get("tool_result")
-        return str(p.get("tool_name") or ""), args, response_text(resp), _exit_code(resp)
-
     def session_usage(self, transcript_path):
         return trace.copilot_session_usage(transcript_path)
 
     def prompt_count(self, transcript_path):
         return trace.copilot_prompt_count(transcript_path)
 
-    def settle(self, transcript_path, wait_s=15.0, fresh_s=60.0):
+    # A log untouched this long belongs to a session that will write no more.
+    SETTLE_FRESH_S = 60.0
+
+    def settle(self, transcript_path, wait_s=15.0):
         # Copilot writes `session.shutdown` -- the event that carries usage -- just AFTER the
         # SessionEnd hook returns (observed order: hook.end, then session.shutdown), so the
         # detached fold can arrive first. Wait for it while the log is still fresh; an old
@@ -1182,7 +1163,7 @@ class Copilot(Host):
         deadline = time.time() + wait_s
         while time.time() < deadline:
             try:
-                if time.time() - os.path.getmtime(transcript_path) > fresh_s:
+                if time.time() - os.path.getmtime(transcript_path) > self.SETTLE_FRESH_S:
                     return
                 with open(transcript_path, "rb") as fh:
                     fh.seek(max(0, os.path.getsize(transcript_path) - 65536))
@@ -1271,7 +1252,7 @@ class Droid(Host):
         if low in ("applypatch", "apply_patch"):
             patch = next((v for v in (args.get("input"), args.get("patch"), args.get("command"))
                           if isinstance(v, str)), "")
-            paths = _PATCH_FILE_RE.findall(patch)
+            paths = PATCH_FILE_RE.findall(patch)
             return "edit", {"path": paths[0] if paths else "", "paths": paths}, text, code
         return name, args, text, code
 

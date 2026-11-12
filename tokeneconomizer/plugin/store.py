@@ -15,6 +15,7 @@ import json
 import os
 import time
 
+
 try:
     import fcntl
 except ImportError:          # pragma: no cover - Windows
@@ -111,8 +112,8 @@ class Store:
         with open(target, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, sort_keys=True) + "\n")
 
-    def read_lines(self, name, limit=None):
-        """Records of a JSONL log, oldest first; the last `limit` when given."""
+    def read_lines(self, name):
+        """Records of a JSONL log, oldest first."""
         out = []
         try:
             with open(self.path(name), encoding="utf-8") as fh:
@@ -123,10 +124,10 @@ class Store:
                         continue
         except OSError:
             return []
-        return out[-limit:] if limit else out
+        return out
 
     @contextlib.contextmanager
-    def locked(self, name="state", timeout=10.0):
+    def locked(self, name, timeout=10.0):
         """Exclusive lock over `name` for the duration of the block; yields whether it was taken.
 
         Polls a non-blocking flock rather than blocking outright, so a stuck holder costs at most

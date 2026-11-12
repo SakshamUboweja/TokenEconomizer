@@ -152,8 +152,6 @@ def weights_for(rec):
                                      be added to MODEL_WEIGHTS, never silently mispriced);
       * no resolvable id at all   -> Claude curve (legacy rows / claude / copilot: keeps
                                      historical behavior, never crashes)."""
-    if not isinstance(rec, dict):
-        return WEIGHTS_CLAUDE
     mid = resolve_model(rec)
     if not mid:
         return WEIGHTS_CLAUDE

@@ -18,9 +18,8 @@ invariants are kept structurally rather than by convention:
     baseline even by accident. The one non-stdlib import the repo-map arm needs is in the
     core's `repomap_gen.py`, a subprocess entry point that nothing imports.
 
-One scaffold answers three questions, and nothing else:
+One scaffold answers two questions, and nothing else:
 
-  * `mounts(profile)`      -- extra `docker run -v` specs needed at container start
   * `setup(ctx)`           -- install/configure itself in the started container, returning
                               a notes dict that lands in `row.json` (`arm_setup`, versions,
                               whether each step actually took effect)
@@ -51,9 +50,9 @@ external tool baselines, as opposed to mechanisms. The per-item noun stays "scaf
 because `baseline` is already the name of the NAIVE arm, and a row carrying both
 `arm: "baseline"` and `baseline: "rtk"` would be unreadable.
 
-Registry: `get(name)` resolves a scaffold; `ARM_SCAFFOLDS` maps an arm name to one, and is
-the single place that mapping exists (`experiments/scripts/run_experiment.py` reads it so the arm
-registry and the harness cannot disagree about which arm carries which scaffold).
+Registry: `get(name)` resolves a scaffold. Which arm carries which scaffold is the arm's own
+`scaffold` field (`te_bench.arms.SCAFFOLD_ARMS` collects them); the harness resolves that name
+here.
 """
 from .base import Scaffold, ScaffoldContext, AgentProfile, ScaffoldError
 from .repomap import RepoMapScaffold
@@ -61,36 +60,12 @@ from .rtk import RtkScaffold
 from .serena import SerenaScaffold
 
 __all__ = ["Scaffold", "ScaffoldContext", "AgentProfile", "ScaffoldError",
-           "SCAFFOLDS", "ARM_SCAFFOLDS", "get", "for_arm"]
+           "SCAFFOLDS", "get"]
 
 SCAFFOLDS = {
     "rtk": RtkScaffold,
     "serena": SerenaScaffold,
     "repomap": RepoMapScaffold,
-}
-
-# Arm -> scaffold. The `trimech-*` arms co-activate a scaffold with all three mechanisms.
-#
-# There is deliberately NO `trimech-serena`. Serena's contract is that the agent navigates
-# through its MCP tools instead of the native ones, and evidence untooling drops tool
-# schemas that go unused -- so the two arms contend for the same lever, and a combined arm
-# would measure that contention rather than either baseline. RTK (which hooks Bash, always
-# protected) and the repo map (which writes a file and touches no tool) do not contend, so
-# their combinations are well-defined.
-ARM_SCAFFOLDS = {
-    "rtk": "rtk",
-    "serena": "serena",
-    "repomap": "repomap",
-    "trimech-rtk": "rtk",
-    "trimech-rtk-web": "rtk",      # Web-Bench's spiral tuning; same scaffold
-    "trimech-repomap": "repomap",
-    # The Codex sibling of trimech-rtk. On Codex the scaffold is instruction-based (there is
-    # no hook the CLI honours), so the arm carries an `rtk_compliance` field -- see rtk.py.
-    "codex-trimech-rtk": "rtk",
-    # The Codex sibling of trimech-repomap. The map is the project AGENTS.md under /testbed,
-    # which the Codex profile declares as its instructions file and already excludes from
-    # the graded diff; nothing else on that lane writes the file.
-    "codex-trimech-repomap": "repomap",
 }
 
 
@@ -103,8 +78,3 @@ def get(name):
     except KeyError:
         raise ScaffoldError(
             f"unknown scaffold {name!r}; known: {', '.join(sorted(SCAFFOLDS))}") from None
-
-
-def for_arm(arm):
-    """The scaffold this arm carries, or None. Unknown arms simply carry none."""
-    return get(ARM_SCAFFOLDS.get(arm or ""))

@@ -28,7 +28,8 @@ import shutil
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache", ".DS_Store")
+IGNORE_PATTERNS = ("__pycache__", "*.pyc", ".pytest_cache", ".DS_Store")
+IGNORE = shutil.ignore_patterns(*IGNORE_PATTERNS)
 
 
 def build(out):
@@ -39,7 +40,7 @@ def build(out):
     # plugin/lib holds a symlink to the package for an install from a checkout (see
     # te_bootstrap); the bundle replaces it with a real copy.
     shutil.copytree(os.path.join(REPO, "plugin"), plugin_out,
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache", "lib"))
+                    ignore=shutil.ignore_patterns(*IGNORE_PATTERNS, "lib"))
     shutil.copytree(os.path.join(REPO, "tokeneconomizer"),
                     os.path.join(plugin_out, "lib", "tokeneconomizer"), ignore=IGNORE)
     with open(os.path.join(REPO, ".claude-plugin", "marketplace.json"), encoding="utf-8") as fh:
@@ -70,7 +71,7 @@ def build_droid(out):
     # directory look like a Claude, Codex or Pi plugin too, and Droid reads those layouts.
     shutil.copytree(os.path.join(REPO, "plugin"), plugin_out,
                     ignore=shutil.ignore_patterns(
-                        "__pycache__", "*.pyc", ".pytest_cache", "lib", ".DS_Store",
+                        *IGNORE_PATTERNS, "lib",
                         ".claude-plugin", ".codex-plugin", ".cursor-plugin", ".github",
                         ".antigravity-plugin", "hooks.json",
                         "codex-skills", "hermes", "opencode", "pi", "slash-commands",

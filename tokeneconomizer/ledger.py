@@ -3,7 +3,7 @@
 The cost of a task (a session, in the plugin) is the agent's EXECUTION cost plus every
 mechanism's LLM OVERHEAD, both on the cache-aware effective basis of `pricing.effective_tokens`:
 
-    task_cost(t) = effective_exec(t) + overhead(t)
+    task_cost(t) = pricing.effective_tokens(t) + overhead(t)
     amortized(T) = (1/T) * sum_{t<=T} task_cost(t)
 
 `overhead()` sums the per-mechanism token fields a mechanism records. Every field is real LLM
@@ -12,7 +12,6 @@ pays for them in the same account as the work they are meant to save. The plugin
 ledger (`plugin.accounting`) and the experiments' aggregation scripts both read this one
 definition, so the recorded and the reported cost cannot drift apart.
 """
-from . import pricing
 
 # Per-task mechanism-overhead token fields, by owning mechanism. All are real
 # mechanism-internal LLM cost that must be amortized into the honest task cost.
@@ -33,9 +32,3 @@ def _num(x):
 def overhead(row):
     """Sum every mechanism-overhead token field present on a stream row."""
     return sum(_num(row.get(k)) for k in OVERHEAD_KEYS)
-
-
-def effective_exec(row):
-    """Cache-aware effective execution cost of a task (pricing.effective_tokens)."""
-    return pricing.effective_tokens(row)
-

@@ -125,7 +125,7 @@ def write_json(path, obj):
     write_atomic(path, json.dumps(obj, indent=2) + "\n")
 
 
-def _exclude_from_git(repo_root, rel=SETTINGS_REL):
+def _exclude_from_git(repo_root, rel):
     """Append `rel` to `.git/info/exclude` (local-only ignore), idempotently."""
     from .paths import _git_common_dir
     gitdir = _git_common_dir(repo_root)
@@ -203,11 +203,9 @@ def set_kept(store, repo_root, host, add=(), remove=()):
     write_applied(store, applied_by_path(doc), kept)
 
 
-def applied(store, path=None):
-    """What the plugin added to the settings file at `path`; without one, to any checkout's."""
+def applied(store, path):
+    """What the plugin added to the settings file at `path`."""
     by = applied_by_path(store.read(APPLIED) or {})
-    if path is None:
-        return sorted(set().union(*by.values())) if by else []
     return list(by.get(_canon(path)) or by.get("") or [])
 
 
@@ -293,15 +291,14 @@ def _sections(lines):
 def _key_set(lines, table, key):
     """Is `key` already set in `table` -- as `key =` under [table], or as a top-level dotted
     `table.key =`? A key the user set is theirs, whatever its value."""
+    own = re.compile(rf"{re.escape(key)}\s*=")
+    dotted = (re.compile(rf"{re.escape(table)}\.{re.escape(key)}\s*=")
+              if table is not None else None)
     for t, a, b in _sections(lines):
         for line in lines[a:b]:
             s = line.strip()
-            if table is None and t is None and re.match(rf"{re.escape(key)}\s*=", s):
-                return True
-            if table is not None and t == table and re.match(rf"{re.escape(key)}\s*=", s):
-                return True
-            if table is not None and t is None and re.match(
-                    rf"{re.escape(table)}\.{re.escape(key)}\s*=", s):
+            if (t == table and own.match(s)) or (
+                    dotted is not None and t is None and dotted.match(s)):
                 return True
     return False
 
@@ -421,8 +418,9 @@ def _apply_codex(repo_root, capabilities, store):
     original = open(path, encoding="utf-8").read() if not created else ""
     text = original
     added = []
+    mine = set(applied(store, path))
     for cap in capabilities:
-        if cap not in CODEX_TOGGLES or cap in applied(store, path):
+        if cap not in CODEX_TOGGLES or cap in mine:
             continue
         changed = False
         for table, key, value in CODEX_TOGGLES[cap]:
@@ -444,7 +442,7 @@ def _apply_codex(repo_root, capabilities, store):
         raise RuntimeError(f"Codex rejected the edited {path}, so it was put back: {err}")
     if created:
         _exclude_from_git(repo_root, CODEX_CONFIG_REL)
-    _record(store, set(applied(store, path)) | set(added), path)
+    _record(store, mine | set(added), path)
     return added
 
 

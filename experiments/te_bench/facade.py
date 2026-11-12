@@ -8,16 +8,15 @@ A caller builds one Economizer per repo stream and calls, per task, in this orde
     ... run the task via the AgentRunner with those decisions ...
     opt_tokens, reason = econ.after_task(task, row, run_dir_path, srow)
 
-The facade owns runner resolution (the ``runner or make_runner()`` fallback so the paid
-proposer / tool-judge / spiral-judge / nudge-writer closures work even when no standing
-runner is threaded) and calls each mechanism's post-task hook in a fixed order
-(tooling -> spiral -> injection) so the emitted row is deterministic.
+The facade adapts the runner for the paid proposer / tool-judge / spiral-judge /
+nudge-writer closures, handing it only to the mechanisms that make a paid call, and calls
+each mechanism's post-task hook in a fixed order (tooling -> spiral -> injection) so the
+emitted row is deterministic.
 
 `adapter` is the DomainAdapter the mechanisms read the task domain through (default
 SwebenchAdapter). `runner` may be an AgentRunner or a bare ``(prompt, model) ->
 (text, eff_tokens)`` optimizer callable; it is adapted for the mechanisms automatically.
 """
-from tokeneconomizer.config import EconomizerConfig
 from .runner import as_optimizer_callable
 from .adapters.swebench import SwebenchAdapter
 from tokeneconomizer.microskills import PrefixStage
@@ -28,16 +27,14 @@ from .spiral_stage import SpiralStage
 class Economizer:
     def __init__(self, config, *, agent, repo, results_root, fresh,
                  optimizer_model="agent", max_turns=80,
-                 runner=None, make_runner=None, adapter=None):
-        """`runner` supplies the paid optimizer call; `make_runner` is a zero-arg factory
-        used to lazily build one only when a mechanism actually needs it. Either may be an
-        AgentRunner or a bare optimizer callable. `adapter` defaults to SwebenchAdapter."""
+                 runner=None, adapter=None):
+        """`runner` supplies the paid optimizer call, as an AgentRunner or a bare optimizer
+        callable. `adapter` defaults to SwebenchAdapter."""
         self.config = config
         self.adapter = adapter if adapter is not None else SwebenchAdapter()
 
         def _resolve():
-            r = runner if runner is not None else (make_runner() if make_runner else None)
-            return as_optimizer_callable(r)
+            return as_optimizer_callable(runner)
 
         # ---- injection ----
         # The paid proposer needs a live optimizer runner; resolve one lazily. The LLM-free
@@ -46,7 +43,7 @@ class Economizer:
         self.injection = PrefixStage(
             config.injection, repo, results_root, fresh,
             runner=injection_runner, optimizer_model=optimizer_model,
-            adapter=self.adapter, agent=agent)
+            adapter=self.adapter)
 
         # ---- tooling (untooling) ----
         judge_tool_runner = _resolve() if config.tooling.judge else None
@@ -63,15 +60,6 @@ class Economizer:
             config.spiral, max_turns,
             runner=spiral_runner, optimizer_model=optimizer_model,
             adapter=self.adapter, agent=agent)
-
-    @classmethod
-    def from_args(cls, args, *, repo, results_root, fresh, runner=None,
-                  make_runner=None, adapter=None):
-        return cls(EconomizerConfig.from_args(args),
-                   agent=args.agent, repo=repo, results_root=results_root,
-                   fresh=fresh, optimizer_model=getattr(args, "optimizer_model", "agent"),
-                   max_turns=getattr(args, "max_turns", 80),
-                   runner=runner, make_runner=make_runner, adapter=adapter)
 
     # ---- per-task hooks the orchestrator calls ----
     def injection_prefix(self, task=None):

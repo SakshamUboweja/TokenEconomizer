@@ -27,14 +27,12 @@ def run(payload, env, host_hint=None):
     from .context import LiveContext
     from .controller import LiveController
     host = hosts.detect(payload, env, hint=host_hint)
-    if hasattr(host, "prepare"):
-        payload = host.prepare(payload, env)
+    payload = host.prepare(payload, env)
     ctx = LiveContext.build(host, host.cwd(payload, env), env,
                             session_id=host.session_id(payload) or None, settle=False)
     if not ctx.config.enabled:
         return {}
-    if hasattr(host, "record_event"):
-        host.record_event(payload)
+    host.record_event(payload)
     if hasattr(host, "expand"):
         # One call of this agent's hook stands for several events (Antigravity's `PreInvocation`
         # is a prompt and the tool results before it): run each and merge their answers.

@@ -852,7 +852,7 @@ def test_the_web_is_never_proposed_and_an_old_deny_rule_for_it_is_given_back(
         t = write_session(str(tmp_path / f"w{i}.jsonl"), [("look", [
             ("Bash", {"command": "ls"}, "a.py", False)])])
         run_session(env, repo, f"w{i}", t)
-    assert denylist.applied(st) == ["CronCreate"]
+    assert denylist.applied_for(st, repo) == ["CronCreate"]
     deny = json.load(open(denylist.settings_path(repo)))["permissions"]["deny"]
     assert deny == ["CronCreate"]
     assert not {"WebFetch", "WebSearch"} & set(st.read("untool.json")["proposal"])
@@ -1065,7 +1065,7 @@ def test_pi_print_mode_counts_as_headless_for_the_stop_hint(env, repo):
 
 
 # ---- GitHub Copilot CLI, through the payloads it sends -------------------------------------
-from tests.test_live_core import COPILOT_POST, copilot_events  # noqa: E402
+from tests.test_live_core import copilot_events  # noqa: E402
 
 GITHUB_TOOLS = ["github-mcp-server-list_issues", "github-mcp-server-get_commit",
                 "github-mcp-server-search_code"]
@@ -1417,7 +1417,7 @@ def test_a_config_codex_rejects_is_put_back(repo, tmp_path, codex_accepts):
     codex_accepts.append("Error loading config.toml: duplicate key")
     with pytest.raises(RuntimeError, match="put back"):
         denylist.apply(repo, ["goals"], st, host="codex")
-    assert open(path).read() == 'model = "gpt-5.6-sol"\n' and denylist.applied(st) == []
+    assert open(path).read() == 'model = "gpt-5.6-sol"\n' and denylist.applied_for(st, repo, "codex") == []
     os.remove(path)
     codex_accepts.append("bad")
     with pytest.raises(RuntimeError):
@@ -1504,10 +1504,10 @@ def test_codex_apply_does_not_record_a_capability_the_user_already_set(repo, tmp
     with open(path, "w", encoding="utf-8") as f:
         f.write("[features]\ngoals = true\n")
     assert denylist.apply(repo, ["goals"], st, host="codex") == []
-    assert denylist.applied(st) == []
+    assert denylist.applied(st, path) == []
     assert open(path, encoding="utf-8").read() == "[features]\ngoals = true\n"
     assert denylist.apply(repo, ["goals", "image_media"], st, host="codex") == ["image_media"]
-    assert denylist.applied(st) == ["image_media"]
+    assert denylist.applied(st, path) == ["image_media"]
 
 
 def test_codex_trust_is_read_from_the_users_config(tmp_path, repo):

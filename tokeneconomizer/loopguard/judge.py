@@ -54,8 +54,8 @@ def llm_stuck_judge(digest, runner, model="agent"):
     if m:
         try:
             obj = json.loads(m.group(0))
-            verdict["stuck"] = (bool(obj["stuck"]) if "stuck" in obj
-                                and obj["stuck"] is not None else None)
+            stuck = obj.get("stuck")
+            verdict["stuck"] = None if stuck is None else bool(stuck)
             verdict["confidence"] = max(0.0, min(1.0, float(obj.get("confidence", 0) or 0)))
             verdict["reason"] = str(obj.get("reason", ""))[:160]
         except Exception:

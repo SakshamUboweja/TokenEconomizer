@@ -295,15 +295,14 @@ def _cache_write_1h(usage, counts):
     return max(0, min(n, counts["cache_creation_input_tokens"]))
 
 
-def claude_session_usage(transcript_path, include_subagents=True):
+def claude_session_usage(transcript_path):
     """Token breakdown of a Claude Code session, de-duplicated by assistant message id.
 
     Returns the four breakdown fields `pricing.effective_tokens` reads and the 1-hour share of
     the cache writes (`cache_creation_1h_input_tokens`), plus `model` (the most used one),
     `requests` (distinct assistant messages carrying usage, less the `<synthetic>` ones Claude
-    Code writes itself) and `files` read."""
-    files = [transcript_path] + (claude_subagent_files(transcript_path)
-                                 if include_subagents else [])
+    Code writes itself) and `files` read; the session's subagents are part of it."""
+    files = [transcript_path] + claude_subagent_files(transcript_path)
     by_id, models, anon = {}, {}, 0
     for path in files:
         for ev in _records(path, '"usage"'):
@@ -334,14 +333,12 @@ def claude_session_usage(transcript_path, include_subagents=True):
     return out
 
 
-def claude_tool_usage(transcript_path, include_subagents=True):
-    """{tool: calls} over a session and, by default, its subagents -- a tool a subagent used is
-    in use, and denying it would take it from the subagent too."""
+def claude_tool_usage(transcript_path):
+    """{tool: calls} over a session and its subagents -- a tool a subagent used is in use, and
+    denying it would take it from the subagent too."""
     from .calls import tool_usage
     counts = {}
-    files = [transcript_path] + (claude_subagent_files(transcript_path)
-                                 if include_subagents else [])
-    for path in files:
+    for path in [transcript_path] + claude_subagent_files(transcript_path):
         for name, n in tool_usage(path).items():
             counts[name] = counts.get(name, 0) + n
     return counts

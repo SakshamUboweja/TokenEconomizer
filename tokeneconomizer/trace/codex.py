@@ -19,15 +19,17 @@ import shlex
 from .jsonl import parse as _parse
 from .jsonl import records as _records
 
-_SHELL_PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$", re.M)
+# The header lines of Codex's patch format, one per file; Hermes's `patch` tool, the hosts and the
+# loop guard read the same lines.
+PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$", re.M)
 _SHELL_GIT_APPLY_PATH_RE = re.compile(r"^\+\+\+ b/(.+?)\s*$", re.M)
 
 
-def _shell_patch_paths(command):
+def shell_patch_paths(command):
     """Paths touched by a patch applied through the shell, () when it is not one."""
     command = command or ""
     if "*** Begin Patch" in command:
-        found = _SHELL_PATCH_FILE_RE.findall(command)
+        found = PATCH_FILE_RE.findall(command)
     elif re.search(r"\bgit\s+apply\b", command):
         found = _SHELL_GIT_APPLY_PATH_RE.findall(command)
     else:
@@ -58,7 +60,7 @@ def codex_exec_calls(lines):
             # providers it is the only form the CLI emits. It is surfaced as the same
             # `apply_patch` call every reader already handles, so a provider change cannot
             # hide edits from them.
-            paths = _shell_patch_paths(command)
+            paths = shell_patch_paths(command)
             if paths and (ok or "Success." in output):
                 out.append((
                     "apply_patch",
@@ -177,42 +179,25 @@ def codex_capability_trace(rollout_path, out_path):
             item = {"type": p.get("type"), "name": p.get("name"),
                     "id": p.get("call_id") or p.get("id"),
                     "status": str(p.get("status") or "completed").lower()}
-            item["input" if p.get("type") == "custom_tool_call" else "arguments"] = (
-                p.get("input") if p.get("type") == "custom_tool_call" else p.get("arguments"))
+            key = "input" if p.get("type") == "custom_tool_call" else "arguments"
+            item[key] = p.get(key)
             out.write(json.dumps({"type": "item.completed", "item": item}) + "\n")
             n += 1
     return n
 
 
 def codex_prompt_count(rollout_path):
-    """How many prompts a Codex session ran: one turn each (`_turn_starts`)."""
-    starts = _turn_starts(rollout_path)
-    return sum(1 for d in _records(rollout_path) if starts(d))
-
-
-def _turn_starts(rollout_path):
-    """What opens a turn in this rollout: its `task_started` events (0.163.0), or where it has
-    none, its `turn_context` records."""
-    def started(d):
-        return (d.get("type") == "event_msg"
-                and (d.get("payload") or {}).get("type") == "task_started")
-    if any(started(d) for d in _records(rollout_path)):
-        return started
-    return lambda d: d.get("type") == "turn_context"
-
-
-
-def codex_session_meta(rollout_path):
-    """{cwd, model, cli_version} from a rollout's session_meta / turn_context records."""
-    meta = {}
-    for ev in _records(rollout_path, '"session_meta"', '"turn_context"'):
-        p = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-        if ev.get("type") == "session_meta":
-            meta.setdefault("cwd", p.get("cwd"))
-            meta.setdefault("cli_version", p.get("cli_version"))
-        elif ev.get("type") == "turn_context" and p.get("model"):
-            meta["model"] = p.get("model")
-    return meta
+    """How many prompts a Codex session ran: one turn each. A turn opens with a `task_started`
+    event (0.163.0), or, in a rollout that has none, with a `turn_context` record; both are
+    counted in one pass."""
+    tasks = contexts = 0
+    for d in _records(rollout_path, '"task_started"', '"turn_context"'):
+        if (d.get("type") == "event_msg"
+                and (d.get("payload") or {}).get("type") == "task_started"):
+            tasks += 1
+        elif d.get("type") == "turn_context":
+            contexts += 1
+    return tasks or contexts
 
 
 def codex_session_usage(rollout_path):
@@ -222,19 +207,22 @@ def codex_session_usage(rollout_path):
     input total less both cache fields, and reasoning tokens are added to output."""
     total = None
     requests = 0
-    for ev in _records(rollout_path, '"token_count"'):
+    model = None   # the last turn's, read in the same pass
+    for ev in _records(rollout_path, '"token_count"', '"turn_context"'):
         p = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+        if ev.get("type") == "turn_context" and p.get("model"):
+            model = p["model"]
+            continue
         if p.get("type") != "token_count":
             continue
         info = p.get("info") or {}
         if info.get("total_token_usage"):
             total = info["total_token_usage"]
             requests += 1
-    meta = codex_session_meta(rollout_path)
     if not total:
         return {"input_tokens": None, "cache_read_input_tokens": None,
                 "cache_creation_input_tokens": None, "output_tokens": None,
-                "requests": 0, "model": meta.get("model")}
+                "requests": 0, "model": model}
     inp = int(total.get("input_tokens") or 0)
     cached = int(total.get("cached_input_tokens") or 0)
     cw = int(total.get("cache_write_input_tokens") or 0)
@@ -244,4 +232,4 @@ def codex_session_usage(rollout_path):
             "cache_creation_input_tokens": cw,
             "output_tokens": int(total.get("output_tokens") or 0) + reasoning,
             "reasoning_output_tokens": reasoning,
-            "requests": requests, "model": meta.get("model")}
+            "requests": requests, "model": model}

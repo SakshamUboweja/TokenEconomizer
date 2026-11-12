@@ -6,12 +6,12 @@ tuples, so a mechanism never needs to know which agent wrote the file. A Codex r
 session are converted into one of these first (`codex.codex_rollout_to_exec`,
 `pi.pi_session_to_claude`).
 """
-import os
 import re
 
 from .claude import claude_calls
 from .codex import codex_exec_calls
 from .copilot import copilot_event_calls, copilot_session_cwd
+from .jsonl import lines as _lines
 
 # rtk in its Codex mode changes the COMMAND LINE rather than hooking it: the agent is told to
 # type `rtk pytest`, `rtk git status`, `rtk proxy <cmd>`. Every classifier that reads a
@@ -31,20 +31,25 @@ def _is_codex_exec(lines):
     return any('"type":"item.completed"' in line.replace(" ", "") for line in lines)
 
 
-def load_trajectory(path):
-    """Ordered [(tool_name, args, result_text, success)] over a saved session log.
-
-    The schema is sniffed from the lines: Codex emits completed items, Claude Code emits message
-    envelopes carrying `tool_use` blocks, and anything else is read as Copilot events."""
-    if not os.path.exists(path):
-        return []
-    lines = [l.strip() for l in open(path, encoding="utf-8", errors="replace") if l.strip()]
+def _read(path):
+    """(kind, calls, lines) of a saved session log, read once. The schema is sniffed from the
+    lines: Codex emits completed items, Claude Code emits message envelopes carrying `tool_use`
+    blocks, and anything else is read as Copilot events. Claude's calls keep their fifth field,
+    the directory the call ran in."""
+    lines = list(_lines(path))
     if _is_codex_exec(lines):
-        return codex_exec_calls(lines)
+        return "codex", codex_exec_calls(lines), lines
     if any('"tool_use"' in line or '"type": "assistant"' in line or '"type":"assistant"' in line
            for line in lines):
-        return [c[:4] for c in claude_calls(lines)]
-    return copilot_event_calls(lines)
+        return "claude", claude_calls(lines), lines
+    return "copilot", copilot_event_calls(lines), lines
+
+
+def load_trajectory(path):
+    """Ordered [(tool_name, args, result_text, success)] over a saved session log of any agent
+    (`_read`)."""
+    kind, calls, _ = _read(path)
+    return [c[:4] for c in calls] if kind == "claude" else calls
 
 
 def call_cwds(path):
@@ -54,15 +59,13 @@ def call_cwds(path):
     runs in `tests/`. Codex runs each command afresh. Copilot's log records only where the
     session started, and that is where its calls are read as starting: models there type
     `cd <that directory> && ...` before every command, which is then the plain form."""
-    calls = load_trajectory(path)
-    if not calls or not os.path.exists(path):
+    kind, calls, lines = _read(path)
+    if not calls:
+        return []
+    if kind == "codex":
         return [None] * len(calls)
-    lines = [l.strip() for l in open(path, encoding="utf-8", errors="replace") if l.strip()]
-    if _is_codex_exec(lines):
-        return [None] * len(calls)
-    cwds = [c[4] for c in claude_calls(lines)]
-    if len(cwds) == len(calls):
-        return cwds
+    if kind == "claude":
+        return [c[4] for c in calls]
     return [copilot_session_cwd(lines)] * len(calls)
 
 

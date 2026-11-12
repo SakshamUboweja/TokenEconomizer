@@ -21,8 +21,7 @@ sys.path[:0] = [_EXPERIMENTS, os.path.dirname(_EXPERIMENTS)]  # te_harness; the 
 
 from te_bench import workloads  # noqa: E402
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_DIR = os.path.join(REPO, "workloads")
+OUT_DIR = os.path.join(_EXPERIMENTS, "workloads")
 
 _DOC = {
     "swebench": "SWE-bench task streams for the Claude/Copilot trimech A/B and the Codex arms.",
@@ -40,17 +39,13 @@ _SEEDS = {"swebench": list(workloads.SWEBENCH_SEEDS),
 
 def build(domain):
     """The exported document for one domain."""
-    groups = {"swebench": workloads.SWEBENCH_INSTANCES,
-              "webbench": workloads.WEBBENCH_TASKS,
-              "creddata": {"creddata": workloads.CREDDATA_INSTANCES},
-              "reposvul": {"reposvul": workloads.REPOSVUL_INSTANCES}}[domain]
     # The exported manifest is what the LAUNCHERS run, so it carries the runnable set
     # (canonical PLUS workloads.SWEBENCH_ADDED, MINUS workloads.SWEBENCH_EXCLUDED), not the
     # historical one. The excluded ids and their reasons ship alongside, so a short cell
     # reads as "deliberately skipped" rather than "silently missing", and the added ids ship
     # alongside too, so a LONGER cell reads as "deliberately extended" rather than "someone
     # ran the wrong list". workloads.task_counts()/total_tasks() are unchanged.
-    groups = workloads.runnable_instances(domain) if domain == "swebench" else groups
+    groups = workloads.runnable_instances(domain)
     doc = {
         "domain": domain,
         "description": _DOC[domain],
@@ -103,11 +98,11 @@ def main():
         if args.check:
             current = open(dest, encoding="utf-8").read() if os.path.exists(dest) else None
             if current != text:
-                stale.append(os.path.relpath(dest, REPO))
+                stale.append(os.path.relpath(dest, _EXPERIMENTS))
             continue
         with open(dest, "w", encoding="utf-8") as fh:
             fh.write(text)
-        print(f"wrote {os.path.relpath(dest, REPO)}  "
+        print(f"wrote {os.path.relpath(dest, _EXPERIMENTS)}  "
               f"({doc['total_tasks']} tasks, {len(doc['groups'])} groups)")
 
     if args.check:

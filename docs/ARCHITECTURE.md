@@ -14,11 +14,12 @@ standard-library-only package `tokeneconomizer`:
 - `tokeneconomizer.domain.DomainAdapter` is the interface to the task domain: reading a session,
   the tools pruning protects or excludes, a trajectory's loop signals, the task text for the
   optional judge, and the micro-skill vocabulary. A new domain is a new adapter, with no change
-  to a mechanism. The plugin's adapter is `tokeneconomizer.plugin.adapter.LiveAdapter`; the
-  benchmark adapters (SWE-Bench, Web-Bench, CredData, ReposVul) are in
-  `experiments/te_bench/adapters/`.
-- `tokeneconomizer.stage.Stage` is the set of hooks a mechanism offers whoever runs it:
-  `build_tools`, `run_kwargs` and `after_task`.
+  to a mechanism. The benchmark adapters (SWE-Bench, Web-Bench, CredData, ReposVul) are in
+  `experiments/te_bench/adapters/`; the plugin's `tokeneconomizer.plugin.adapter.LiveAdapter`
+  implements only the methods its stages call (`tool_usage`, `parse_catalog_with_source`,
+  `protected_tools`, `env_vocabulary`).
+- Each mechanism's stage offers whoever runs it the hooks it needs, called in this order
+  around a task: `build_tools` and `run_kwargs` at launch, `after_task` once it has finished.
 
 Two callers run the stages, and the mechanisms import neither:
 

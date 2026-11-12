@@ -98,6 +98,8 @@ ON_VALUE = {"microskills": "envfacts+distiller", "toolprune": "auto", "loopguard
             "repomap": "on"}
 _ON = ("on", "true", "yes", "1", "enable", "enabled")
 _OFF = ("off", "false", "no", "0", "disable", "disabled")
+# The words a plain boolean (a bool setting, TE_DISABLE) reads as true; narrower than `_ON`.
+_TRUTHY = ("1", "true", "yes", "on")
 # Values renamed with their mechanism.
 _VALUE_ALIASES = {"loopguard": {"guard": "stop"}}
 
@@ -144,20 +146,18 @@ LOOPGUARD_KEYS = {
 }
 
 
-def canonical(key):
-    """A setting's current name: `inject` -> `microskills`, `spiral.x` -> `loopguard.x`."""
-    for prefix in _THRESHOLD_PREFIXES:
-        if key.startswith(prefix):
-            return "loopguard." + key[len(prefix):]
-    return ALIASES.get(key, key)
-
-
 def _threshold_name(key):
     """`min_turns` for `loopguard.min_turns` (or the old `spiral.min_turns`), else None."""
     for prefix in _THRESHOLD_PREFIXES:
         if key.startswith(prefix):
             return key[len(prefix):]
     return None
+
+
+def canonical(key):
+    """A setting's current name: `inject` -> `microskills`, `spiral.x` -> `loopguard.x`."""
+    name = _threshold_name(key)
+    return "loopguard." + name if name is not None else ALIASES.get(key, key)
 
 
 @dataclass
@@ -253,8 +253,7 @@ class LiveConfig:
                 items = value if isinstance(value, list) else str(value).split(",")
                 v = [str(x).strip() for x in items if str(x).strip()]
             elif isinstance(cur, bool):
-                v = value if isinstance(value, bool) else str(value).strip().lower() in (
-                    "1", "true", "yes", "on")
+                v = value if isinstance(value, bool) else str(value).strip().lower() in _TRUTHY
             elif isinstance(cur, int):
                 if isinstance(value, bool):
                     raise ValueError("not a number")
@@ -366,7 +365,7 @@ def load_config(root, repo_dir=None, env=None):
                 cfg.set("loopguard_thresholds", json.loads(env[var]), source=var)
             except ValueError:
                 cfg.warnings.append(f"{var}: not valid JSON")
-    if str(env.get("TE_DISABLE", "")).strip().lower() in ("1", "true", "yes", "on"):
+    if str(env.get("TE_DISABLE", "")).strip().lower() in _TRUTHY:
         cfg.enabled = False
     if cfg.loopguard == "stop":
         cfg.warnings.append("loopguard=stop acts as nudge: the plugin no longer stops a turn; a "

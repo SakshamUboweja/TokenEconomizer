@@ -2,8 +2,8 @@
 
 These are the comparison points: somebody else's off-the-shelf tool installed into the
 agent's container, with the economizer inert. The scaffold does the work; the arm just
-names which one, and `ARM_SCAFFOLDS` in this package's `__init__` maps arm -> scaffold for
-the harness.
+names which one in its `scaffold` field, which the harness resolves through this package's
+`get`.
 
 The `trimech-rtk` / `trimech-repomap` arms are NOT here. They are `trimech` with a scaffold
 co-activated, so they live beside `trimech` in `mechanism_arms.py` -- the mechanisms are

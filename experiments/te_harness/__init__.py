@@ -19,11 +19,12 @@ directory:
 
     python scripts/run_experiment.py --runner te_harness.swebench:make_runner ...
 
-Both `make_runner` factories take the driver's `--agent` label and return the runner for
-that agent -- `claude` (Claude Code, on the Anthropic API), `copilot` (GitHub Copilot CLI,
-on its own GitHub or BYOK auth) or `codex` (OpenAI Codex CLI, on the OpenAI API). An
-unknown label raises rather than falling back, because a runner that quietly ran the wrong
-agent would produce plausible rows under the wrong name. Setup: experiments/README.md.
+Both `make_runner` factories (`te_harness.swebench`, `te_harness.webbench`) take the
+driver's `--agent` label and return the runner for that agent -- `claude` (Claude Code, on
+the Anthropic API), `copilot` (GitHub Copilot CLI, on its own GitHub or BYOK auth) or
+`codex` (OpenAI Codex CLI, on the OpenAI API). An unknown label raises rather than falling
+back, because a runner that quietly ran the wrong agent would produce plausible rows under
+the wrong name. Setup: experiments/README.md.
 """
 import os as _os
 import sys as _sys
@@ -34,14 +35,3 @@ import sys as _sys
 _ROOT = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
-
-from .swebench import (make_runner, ClaudeSwebenchRunner,  # noqa: E402,F401
-                       CopilotSwebenchRunner, RUNNERS as SWEBENCH_RUNNERS)
-from .webbench import (make_runner as make_webbench_runner,  # noqa: E402,F401
-                       WebBenchRunner, CopilotWebBenchRunner,
-                       RUNNERS as WEBBENCH_RUNNERS)
-from . import copilot  # noqa: E402,F401
-
-__all__ = ["make_runner", "ClaudeSwebenchRunner", "CopilotSwebenchRunner",
-           "make_webbench_runner", "WebBenchRunner", "CopilotWebBenchRunner",
-           "SWEBENCH_RUNNERS", "WEBBENCH_RUNNERS", "copilot"]

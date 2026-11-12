@@ -2,8 +2,10 @@
 
 The mechanisms are domain-neutral; what is specific to a domain -- how its logs read, which
 tools are its work surface, which words name its interpreters and test runners -- enters only
-through these methods. The plugin's adapter is `plugin.adapter.LiveAdapter` (a real repository
-in a person's session); the benchmark adapters live in `experiments/te_bench/adapters/`.
+through these methods. The benchmark adapters in `experiments/te_bench/adapters/` implement all
+of them; the plugin's `plugin.adapter.LiveAdapter` (a real repository in a person's session)
+implements only the ones its stages call: `tool_usage`, `parse_catalog_with_source`,
+`protected_tools` and `env_vocabulary`.
 
   load_trajectory      -> every mechanism's view of a finished session
   tool_usage           -> the tools a session used (tool pruning's evidence)
@@ -11,7 +13,7 @@ in a person's session); the benchmark adapters live in `experiments/te_bench/ada
   protected_tools      -> the work surface pruning never touches
   spiral_snapshot      -> a finished trajectory's loop signals, for the guard's envelope
   problem_statements   -> {task_id: task text} for the optional per-task tool judge
-  env_vocabulary       -> (optional) the `microskills.Vocabulary` naming this domain's
+  env_vocabulary       -> (optional) the `microskills.observe.Vocabulary` naming this domain's
                           interpreters, runners, package tools, fetchers and probes
 
 Running a task and grading it is not on this protocol: that is the caller's job (the plugin's
@@ -40,10 +42,10 @@ class DomainAdapter(Protocol):
         ...
 
     def parse_catalog_with_source(self, run_dir_path, agent):
-        """-> ({tool: desc}, source_name) -- OPTIONAL. source_name is None when no catalog
-        source produced anything, which pruning reports as a defect rather than reading as
-        "no tools loaded". The default falls back to parse_catalog with source 'unknown'."""
-        return self.parse_catalog(run_dir_path, agent), "unknown"
+        """-> ({tool: desc}, source_name). source_name is None when no catalog source
+        produced anything, which pruning reports as a defect rather than reading as "no tools
+        loaded"."""
+        ...
 
     # ---- tool pruning ----
     def protected_tools(self):
@@ -62,6 +64,6 @@ class DomainAdapter(Protocol):
 
     # ---- micro-skill vocabulary (optional) ----
     def env_vocabulary(self):
-        """-> a `microskills.Vocabulary` for this domain (default: Python/git)."""
-        from .microskills import PYTHON_GIT
-        return PYTHON_GIT
+        """-> a `microskills.observe.Vocabulary` for this domain. OPTIONAL: an adapter without
+        it gets the micro-skills' Python/git vocabulary."""
+        ...

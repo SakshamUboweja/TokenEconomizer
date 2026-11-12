@@ -183,15 +183,14 @@ def test_answer_key_attempts_counts_from_the_trace():
     """
     from te_harness import swebench
     d = _transcript(["python -m pytest -q", _ABUSIVE[0], "pip install six", _ABUSIVE[2]])
-    n = swebench.ClaudeSwebenchRunner._answer_key_attempts(None, d)
+    n = swebench.answer_key_attempts(d)
     assert n == 2
 
 
 def test_answer_key_attempts_is_none_when_there_is_no_transcript():
     """None, not 0: "no trace" and "a clean trace" must not read the same."""
     from te_harness import swebench
-    assert swebench.ClaudeSwebenchRunner._answer_key_attempts(
-        None, tempfile.mkdtemp()) is None
+    assert swebench.answer_key_attempts(tempfile.mkdtemp()) is None
 
 
 def test_both_domains_count_answer_key_attempts_through_one_seam():
@@ -205,7 +204,6 @@ def test_both_domains_count_answer_key_attempts_through_one_seam():
     assert webbench.answer_key_attempts is swebench.answer_key_attempts
     d = _transcript(["ls -la", _ABUSIVE[0]])
     assert webbench.answer_key_attempts(d) == 1
-    assert swebench.ClaudeSwebenchRunner._answer_key_attempts(None, d) == 1
 
 
 # ---- per-agent enforcement -----------------------------------------------------------

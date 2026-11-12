@@ -56,8 +56,3 @@ def test_swebench_problem_statements_from_file(tmp_path):
     assert "django-1" in ps
     assert "[link redacted]" in ps["django-1"]     # gold URL was redacted
 
-
-def test_creddata_classify_domain_differs():
-    assert SwebenchAdapter().classify_domain() is None
-    assert CredDataAdapter().classify_domain() is not None
-

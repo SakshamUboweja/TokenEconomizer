@@ -115,13 +115,13 @@ def _session_env(state, trap):
     return env
 
 
-def run_session(repo, env, plugin, model, cli="copilot", timeout=600):
-    cmd = [*sidecall.program(cli), "-p", PROMPT, "--plugin-dir", plugin, "--allow-all-tools",
+def run_session(repo, env, plugin, model):
+    cmd = [*sidecall.program("copilot"), "-p", PROMPT, "--plugin-dir", plugin, "--allow-all-tools",
            "--no-auto-update", "--output-format", "json"]
     if model:
         cmd += ["--model", model]
     out = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, encoding="utf-8",
-                         errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
+                         errors="replace", timeout=600, stdin=subprocess.DEVNULL)
     sid, answer, error = None, "", (out.stderr or "").strip().splitlines()[-1:] or [""]
     for line in (out.stdout or "").splitlines():
         try:
@@ -137,7 +137,7 @@ def run_session(repo, env, plugin, model, cli="copilot", timeout=600):
 
 def inspect_session(sid):
     """What one finished session did, from Copilot's own log."""
-    log = os.path.join(hosts.copilot_home(), "session-state", sid, "events.jsonl")
+    log = hosts.copilot_log(sid)
     hosts.Copilot().settle(log)
     injected = False
     cmds = [(args or {}).get("command") or ""
@@ -175,10 +175,10 @@ def _line(r):
             f"{r['tried_pytest']}  tool definitions: {r['tool_definition_tokens']} tokens")
 
 
-def run(sessions=6, model=None, keep=False, cli="copilot", out=print):
-    if not shutil.which(cli):
-        raise RuntimeError(f"`{cli}` is not on PATH")
-    model = sidecall.copilot_model(model or "")
+def run(sessions=6, model=None, keep=False):
+    if not shutil.which("copilot"):
+        raise RuntimeError("`copilot` is not on PATH")
+    model = sidecall.copilot_model(model)
     plugin = _plugin_root()
     base = next((f for f in (denylist.copilot_trusted_folders() or [])
                  if os.path.isdir(f) and os.access(f, os.W_OK)), None)
@@ -189,57 +189,57 @@ def run(sessions=6, model=None, keep=False, cli="copilot", out=print):
         env = _session_env(state, trap)
         route = ("BYOK " + (os.environ.get("COPILOT_PROVIDER_TYPE") or "openai")
                  if os.environ.get("COPILOT_PROVIDER_BASE_URL") else "Copilot subscription")
-        out(f"TokenEconomizer probe -- Copilot ({route}), model {model or '(Copilot default)'}, "
-            f"plugin {plugin}")
+        print(f"TokenEconomizer probe -- Copilot ({route}), model {model or '(Copilot default)'}, "
+              f"plugin {plugin}")
         if not base:
-            out("  note: Copilot trusts no folder here, so the deny list cannot take effect "
-                "in the probe's repository (Copilot ignores an untrusted folder's settings)")
+            print("  note: Copilot trusts no folder here, so the deny list cannot take effect "
+                  "in the probe's repository (Copilot ignores an untrusted folder's settings)")
         _, tools = toolcheck.refresh_catalog(state, host="copilot")
-        out(f"  catalog: {len(tools)} tools recorded (local capture, no model call)")
+        print(f"  catalog: {len(tools)} tools recorded (local capture, no model call)")
         ctx = LiveContext.build(hosts.Copilot(), repo, env)
         results = []
         for i in range(1, sessions + 1):
-            sid, answer, err = run_session(repo, env, plugin, model, cli=cli)
+            sid, answer, err = run_session(repo, env, plugin, model)
             if not sid:
-                out(f"  session {i}: no session ran ({err or 'no output'})")
+                print(f"  session {i}: no session ran ({err or 'no output'})")
                 return 1
             _wait_folded(ctx, sid)
             r = dict(inspect_session(sid), label=f"session {i}", answer=answer)
             results.append(r)
-            out(_line(r) + f"  answer: {answer[:40]}")
+            print(_line(r) + f"  answer: {answer[:40]}")
         unt = ctx.store.read("untool.json") or {}
         proposal = unt.get("proposal") or []
         lean = None
         if proposal:
             denylist.apply(repo, proposal, ctx.store, host="copilot")
             try:
-                sid, answer, err = run_session(repo, env, plugin, model, cli=cli)
+                sid, answer, err = run_session(repo, env, plugin, model)
                 if sid:
                     _wait_folded(ctx, sid)
                     lean = dict(inspect_session(sid), label="deny list", answer=answer)
-                    out(_line(lean) + f"  answer: {answer[:40]}")
+                    print(_line(lean) + f"  answer: {answer[:40]}")
             finally:
                 denylist.restore(repo, ctx.store, host="copilot")
         # the verdict
         everything = results + ([lean] if lean else [])
         without = [r for r in everything if not r["injected"] and r["tests"]]
         with_ = [r for r in everything if r["injected"] and r["tests"]]
-        out("")
-        out(f"  without the fact: {sum(1 for r in without if r['tried_pytest'])}/{len(without)} "
-            f"sessions tried pytest, which is not installed; with it: "
-            f"{sum(1 for r in with_ if r['tried_pytest'])}/"
-            f"{len(with_)}" + ("" if with_ else "  (the fact never cleared its firing gate; "
-                                                 "run more --sessions)"))
+        print("")
+        print(f"  without the fact: {sum(1 for r in without if r['tried_pytest'])}/{len(without)} "
+              f"sessions tried pytest, which is not installed; with it: "
+              f"{sum(1 for r in with_ if r['tried_pytest'])}/"
+              f"{len(with_)}" + ("" if with_ else "  (the fact never cleared its firing gate; "
+                                                   "run more --sessions)"))
         full = [r["tool_definition_tokens"] for r in results if r["tool_definition_tokens"]]
         if proposal and lean and full and lean["tool_definition_tokens"]:
-            out(f"  deny list {', '.join(proposal)}: tool definitions {full[-1]} -> "
-                f"{lean['tool_definition_tokens']} tokens per request")
+            print(f"  deny list {', '.join(proposal)}: tool definitions {full[-1]} -> "
+                  f"{lean['tool_definition_tokens']} tokens per request")
         elif not proposal:
-            out("  deny list: nothing proposed (a server is proposed once none of its tools "
-                "was used in `toolprune_evidence` sessions)")
+            print("  deny list: nothing proposed (a server is proposed once none of its tools "
+                  "was used in `toolprune_evidence` sessions)")
         return 0
     finally:
         if keep:
-            out(f"  kept: {root}")
+            print(f"  kept: {root}")
         else:
             shutil.rmtree(root, ignore_errors=True)

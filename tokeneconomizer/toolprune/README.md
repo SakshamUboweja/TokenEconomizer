@@ -26,4 +26,4 @@ default), once the repository's sessions have been idle `toolprune_quiet_minutes
 |---|---|
 | `stage.py` | `ToolingStage`: evidence across sessions, the proposal, the Codex mask |
 | `codex.py` | `CodexUntoolProfile`: Codex's evidence-gated capability controller |
-| `tools.py` | the protected and inapplicable tool sets; the experiments' per-task tool judge |
+| `tools.py` | the protected tool set; the experiments' per-task tool judge |

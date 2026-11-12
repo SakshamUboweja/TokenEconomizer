@@ -188,14 +188,6 @@ declare -A GROUP_N
 while IFS=$'\t' read -r g n; do GROUP_N["$g"]="$n"; done < <(
   "$PY" "$HERE/../sweep_plan.py" --domain "$DOMAIN" "${WORKLOAD_ARGS[@]}" --format counts)
 
-# cell_rows <arm> <repo> <seed> — how many row.json files that cell already holds.
-cell_rows() {
-  local tag="${2##*/}"; tag="${tag//-/_}"
-  local dir="$DEST/$1/${tag}_s$3"
-  [[ -d "$dir" ]] || { echo 0; return; }
-  find "$dir" -name row.json 2>/dev/null | wc -l
-}
-
 FAILED=()
 SKIPPED=0
 RAN=0
@@ -204,7 +196,7 @@ for line in "${PLAN[@]}"; do
   IFS=$'\t' read -r arm repo seed <<<"$line"
   want="${GROUP_N[$repo]:-0}"
   if [[ "$LIMIT" != "0" && "$want" -gt "$LIMIT" ]]; then want="$LIMIT"; fi
-  have="$(cell_rows "$arm" "$repo" "$seed")"
+  have="$(te_cell_rows "$arm" "$repo" "$seed")"
   if [[ "$SKIP_DONE" == "1" && "$want" -gt 0 && "$have" -ge "$want" ]]; then
     echo "[main_sweep] SKIP  $arm $repo s$seed ($have/$want rows already stored)"
     SKIPPED=$((SKIPPED + 1))

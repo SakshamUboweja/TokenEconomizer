@@ -17,11 +17,10 @@ scaffold with a string and the harness resolves it lazily, so `import tokenecono
 `import te_bench.arms` both stay light -- and `tokeneconomizer/__init__.py`
 deliberately does not import this module, so the zero-dependency core import is unchanged.
 """
-from ._armspec import Arm, arm, cfg
 from .baselines.arms import BASELINE_ARMS
 from .mechanism_arms import MECHANISM_ARMS
 
-__all__ = ["ARMS", "SCAFFOLD_ARMS", "ARM_ORDER", "Arm", "arm", "cfg"]
+__all__ = ["ARMS", "SCAFFOLD_ARMS", "ARM_ORDER"]
 
 # Canonical order, stated rather than left to emerge from a dict merge: it is what a plan
 # lists and what a reader compares against the tables above, and the two source dicts
@@ -50,6 +49,5 @@ if _missing or _unknown:                    # a new arm must be placed, not sile
 ARMS = {name: _MERGED[name] for name in ARM_ORDER}
 
 # Arms carrying an external tool scaffold, derived rather than restated so it cannot fall
-# out of step with ARMS. `tests/test_sweep_arms.py` pins this against
-# `te_bench.baselines.ARM_SCAFFOLDS`, which is what the harness reads.
+# out of step with ARMS. The harness resolves each name with `te_bench.baselines.get`.
 SCAFFOLD_ARMS = {name: a.scaffold for name, a in ARMS.items() if a.scaffold}

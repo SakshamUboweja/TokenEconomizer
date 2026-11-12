@@ -139,6 +139,7 @@ ERROR_CLASSES = (
     ("unreachable", re.compile(r"Network is unreachable|No route to host|Connection timed out|"
                                r"Operation timed out|timed out after|ETIMEDOUT", re.I)),
 )
+_ERROR_RX = dict(ERROR_CLASSES)
 NETWORK_ERRORS = frozenset({"connection_refused", "name_resolution", "unreachable"})
 # The command a "not found" line names: `bash: ruff: command not found`, `/bin/sh: 1: ruff: not
 # found`, `zsh: command not found: ruff`, `'ruff' is not recognized ...`.
@@ -201,20 +202,16 @@ def segments(cmd):
             buf.append(c)
         i += 1
     out.append("".join(buf))
-    return [s.strip().strip("()").strip() for s in out if s.strip().strip("()").strip()]
-
-
-def _tokens(seg):
-    return seg.split()
+    return [t for s in out if (t := s.strip().strip("()").strip())]
 
 
 class Observation:
     """One classified command segment."""
-    __slots__ = ("call", "intent", "form", "head", "prefix", "hosts", "probe", "outcome",
+    __slots__ = ("call", "intent", "form", "head", "hosts", "probe", "outcome",
                  "segment", "labels", "label_err", "loaded", "tests_ran", "env", "not_found")
 
-    def __init__(self, call, intent, form, head, prefix, segment, hosts=(), probe=None):
-        self.call, self.intent, self.form, self.head, self.prefix = call, intent, form, head, prefix
+    def __init__(self, call, intent, form, head, segment, hosts=(), probe=None):
+        self.call, self.intent, self.form, self.head = call, intent, form, head
         self.segment, self.hosts, self.probe, self.outcome = segment, tuple(hosts), probe, None
         self.labels, self.label_err, self.loaded = (), False, False
         self.tests_ran = False
@@ -332,9 +329,9 @@ def classify_command(cmd, call_index=0, vocab=None, cwd="", root=None, top=None)
             continue
         m = _ACTIVATE_RE.match(seg) or _CONDA_ACTIVATE_RE.match(seg)
         if m:
-            carried = f"{seg.split()[0] if seg.startswith(('conda', 'mamba')) else 'source'} activate {m.group(1)} &&"
-            if carried.startswith("conda") or carried.startswith("mamba"):
-                carried = f"conda activate {m.group(1)} &&"
+            # A mamba activation is spelled as conda's, so the two pool into one form.
+            tool = "conda" if seg.startswith(("conda", "mamba")) else "source"
+            carried = f"{tool} activate {m.group(1)} &&"
             continue
         prefix = " ".join(x for x in (cd, carried) if x)
         body = seg
@@ -355,7 +352,7 @@ def classify_command(cmd, call_index=0, vocab=None, cwd="", root=None, top=None)
                 launcher = "pipx run" if m.group(1).startswith("pipx") else "uvx"
                 prefix = (prefix + " " if prefix else "") + launcher
                 body = body[m.end():]
-        toks = _tokens(body)
+        toks = body.split()
         while toks and (toks[0] in PREFIX_HEADS or _ASSIGN_TOKEN_RE.match(toks[0])):
             if _ASSIGN_TOKEN_RE.match(toks[0]):          # `env VAR=value cmd`
                 assigned, toks = True, toks[1:]
@@ -378,7 +375,7 @@ def _runner_script(rest, vocab):
         if t.startswith("-"):
             continue
         for s in vocab.runner_scripts:
-            if t == s or t.endswith("/" + s) or t.endswith(s):
+            if t.endswith(s):
                 return t.lstrip("./") if t.startswith("./") else t
         return None
     return None
@@ -390,20 +387,20 @@ def _classify(head, base, rest, body, prefix, seg, call, vocab):
 
     if base in vocab.interpreters or _INTERP_VERSIONED_RE.match(base):
         if rest and all(t in ("--version", "-V", "-VV", "-v") for t in rest):
-            return Observation(call, "probe_env", form(head), head, prefix, seg)
+            return Observation(call, "probe_env", form(head), head, seg)
         if "-m" in rest:
             mod = rest[rest.index("-m") + 1] if rest.index("-m") + 1 < len(rest) else ""
             if mod in vocab.runner_modules:
-                return Observation(call, "run_tests", form(f"{head} -m {mod}"), head, prefix, seg)
+                return Observation(call, "run_tests", form(f"{head} -m {mod}"), head, seg)
             # `python -m mypy` runs the checker itself, not the interpreter.
             if vocab.generic and mod in vocab.build_heads:
-                return Observation(call, "run_build", form(f"{head} -m {mod}"), head, prefix, seg)
+                return Observation(call, "run_build", form(f"{head} -m {mod}"), head, seg)
         script = _runner_script(rest, vocab)
         if script and (script != "manage.py" or "test" in rest):
-            return Observation(call, "run_tests", form(f"{head} {script}"), head, prefix, seg)
-        return Observation(call, "run_interpreter", form(head), head, prefix, seg)
+            return Observation(call, "run_tests", form(f"{head} {script}"), head, seg)
+        return Observation(call, "run_interpreter", form(head), head, seg)
     if base in vocab.runner_heads:
-        return Observation(call, "run_tests", form(head), head, prefix, seg)
+        return Observation(call, "run_tests", form(head), head, seg)
     for s in vocab.runner_scripts:
         if head == s or head.endswith("/" + s) or head == "./" + s:
             if s == "manage.py" and "test" not in rest:
@@ -412,46 +409,44 @@ def _classify(head, base, rest, body, prefix, seg, call, vocab):
             # form that way so `./tests/runtests.py` and `python tests/runtests.py` pool.
             return Observation(call, "run_tests",
                                form(f"{vocab.canonical_interpreter} " + head.lstrip("./")),
-                               head, prefix, seg)
+                               head, seg)
     if base in vocab.task_heads and rest and rest[0] == "test":
-        return Observation(call, "run_tests", form(f"{base} test"), head, prefix, seg)
+        return Observation(call, "run_tests", form(f"{base} test"), head, seg)
     if vocab.generic:
         if base in _RUN_SCRIPT_HEADS and len(rest) > 1 and rest[0] == "run":
             script = rest[1]
             kind = script.split(":", 1)[0]
             if kind == "test":
-                return Observation(call, "run_tests", form(f"{base} run {script}"), head, prefix,
-                                   seg)
+                return Observation(call, "run_tests", form(f"{base} run {script}"), head, seg)
             if kind in BUILD_SUBS:
-                return Observation(call, "run_build", form(f"{base} run {script}"), head, prefix,
-                                   seg)
+                return Observation(call, "run_build", form(f"{base} run {script}"), head, seg)
         if base in vocab.task_heads and rest and rest[0] in BUILD_SUBS:
-            return Observation(call, "run_build", form(f"{base} {rest[0]}"), head, prefix, seg)
+            return Observation(call, "run_build", form(f"{base} {rest[0]}"), head, seg)
         if base in vocab.build_heads:
-            return Observation(call, "run_build", form(base), head, prefix, seg)
+            return Observation(call, "run_build", form(base), head, seg)
     if base in vocab.env_probe_heads:
-        return Observation(call, "probe_env", form(base), head, prefix, seg)
+        return Observation(call, "probe_env", form(base), head, seg)
     if base in vocab.fetch_heads:
-        return Observation(call, "fetch_remote", form(base), head, prefix, seg,
+        return Observation(call, "fetch_remote", form(base), head, seg,
                            hosts=_URL_HOST_RE.findall(body))
     if base == "git" and rest:
         sub = rest[0]
         if sub in GIT_FETCH_SUBS:
-            return Observation(call, "fetch_remote", form(f"git {sub}"), head, prefix, seg,
+            return Observation(call, "fetch_remote", form(f"git {sub}"), head, seg,
                                hosts=_URL_HOST_RE.findall(body))
         if sub in GIT_PROBE_SUBS:
             kind = _probe_kind(sub, rest[1:])
             if kind:
-                return Observation(call, "probe_vcs_refs", form(f"git {sub}"), head, prefix,
-                                   seg, probe=kind)
+                return Observation(call, "probe_vcs_refs", form(f"git {sub}"), head, seg,
+                                   probe=kind)
         return None
     if base in vocab.package_tools:
         if base.startswith(("pip", "npm", "yarn", "pnpm")) and rest and rest[0] in (
                 "install", "download", "add", "ci"):
             hosts = _URL_HOST_RE.findall(body)
-            return Observation(call, "fetch_remote", form(f"{base} {rest[0]}"), head, prefix,
-                               seg, hosts=hosts)
-        return Observation(call, "package_tool", form(base), head, prefix, seg)
+            return Observation(call, "fetch_remote", form(f"{base} {rest[0]}"), head, seg,
+                               hosts=hosts)
+        return Observation(call, "package_tool", form(base), head, seg)
     return None
 
 
@@ -527,7 +522,7 @@ def _test_labels(o):
     """The test labels a runner observation was given: positional arguments after the runner's
     own token that look like a module, a path or a test id. A plain name right after an option
     is taken to be that option's value (`-k name`), so it is not a label."""
-    toks = _tokens(o.segment)
+    toks = o.segment.split()
     last = (o.form.split() or [""])[-1]
     start = next((i + 1 for i, t in enumerate(toks)
                   if t == last or t.lstrip("./") == last or t.endswith("/" + last)), len(toks))
@@ -627,9 +622,12 @@ def observe_task(transcript_path, vocab=None):
             obs = classify_command(cmd, idx, vocab)
         else:
             obs = classify_command(cmd, idx, vocab, cwd=here, root=root, top=top)
+        # The exit-code hint scans the whole output: read it once, and only for a call that
+        # needs it (the env-call read below, or a call with observations).
+        success = None
         if vocab.generic or "python" in cmd or "=" in cmd:
-            ec = _env_calls(cmd, out, ok if _exit_code_hint(out) is None else
-                            _exit_code_hint(out) == 0)
+            success = _succeeded(ok, out)
+            ec = _env_calls(cmd, out, success)
             if ec["need"] or ec["sets"]:
                 env_calls.append(dict(ec, call=idx))
         if not obs:
@@ -647,22 +645,24 @@ def observe_task(transcript_path, vocab=None):
         n_seg = sum(1 for sg in segments(unwrap(cmd))
                     if (sg.split() or [""])[0].rsplit("/", 1)[-1] not in _PASSTHROUGH)
         homogeneous = n_seg == len(obs) and len({o.intent for o in obs}) == 1
-        hint = _exit_code_hint(out)
-        success = bool(ok) if hint is None else (hint == 0)
+        if success is None:
+            success = _succeeded(ok, out)
         err = error_class(out)
         if err in FORM_ERRORS or err in NETWORK_ERRORS:
             targets = [o for o in obs if o.intent in ("run_interpreter", "run_tests",
                                                        "run_build", "package_tool",
                                                        "fetch_remote")]
-            named = [o for o in targets
-                     if (o.head and o.head in out) or (o.head and o.head.rsplit("/", 1)[-1] in
-                                                        _error_line(out, err))]
             if err in NETWORK_ERRORS:
+                line = ""
                 named = [o for o in targets if o.intent == "fetch_remote"
                          and (not o.hosts or any(h in out for h in o.hosts))] or \
                         [o for o in targets if o.intent == "fetch_remote"]
+            else:
+                line = _error_line(out, err)
+                named = [o for o in targets if o.head
+                         and (o.head in out or o.head.rsplit("/", 1)[-1] in line)]
             chosen = named or (targets[-1:] if not success else [])
-            missing = _not_found_name(_error_line(out, err)) if err == "command_missing" else ""
+            missing = _not_found_name(line) if err == "command_missing" else ""
             for o in chosen:
                 o.outcome = err
                 o.not_found = bool(missing) and _base(o.head) == missing
@@ -703,8 +703,14 @@ def observe_task(transcript_path, vocab=None):
             "env": env_calls}
 
 
+def _succeeded(ok, out):
+    """Did a shell call succeed? Its output's exit-code line, when it prints one, else `ok`."""
+    hint = _exit_code_hint(out)
+    return bool(ok) if hint is None else hint == 0
+
+
 def _error_line(out, err):
-    rx = dict(ERROR_CLASSES)[err]
+    rx = _ERROR_RX[err]
     m = rx.search(out or "")
     if not m:
         return ""

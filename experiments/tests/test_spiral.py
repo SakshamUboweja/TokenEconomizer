@@ -1,7 +1,7 @@
 """Spiral: generic envelope guard + Codex-native post-green policy."""
 from te_bench.spiral_stage import SpiralStage
 from te_bench import codex_spiral as cs
-from tokeneconomizer.config import SpiralConfig
+from te_bench.config import SpiralConfig
 
 
 def test_shipped_codex_policy_flags():
@@ -31,7 +31,7 @@ def test_codex_spiral_run_kwargs_policy():
     cfg = SpiralConfig(codex_spiral=True)
     stage = SpiralStage(cfg, max_turns=80, agent="codex")
     rk = stage.run_kwargs({"instance_id": "x-1"})
-    assert "codex_spiral_policy" in rk       # None until the tracker warms, but present
+    assert "codex_spiral_policy" in rk       # at the cold-start threshold until the tracker warms
 
 
 def test_generic_guard_after_task_advances_envelope():
@@ -83,9 +83,9 @@ def test_shell_applied_patch_is_an_edit_event_with_its_paths():
     failed = _cs.parse_events(_line({"type": "command_execution", "command": _PATCH_CMD,
                                      "aggregated_output": "apply_patch: error: Failed to find context", "exit_code": 1}))
     assert [e.kind for e in failed] == ["command"]
-    # an ordinary command stays one event
+    # an ordinary command stays one event; a patch command's last event is the command
     plain = _cs.parse_events(_line({"type": "command_execution", "command": "ls", "aggregated_output": "", "exit_code": 0}))
-    assert [e.kind for e in plain] == ["command"]
+    assert [e.kind for e in plain] == ["command"] and _cs.parse_events(_line({"type": "command_execution", "command": _PATCH_CMD, "aggregated_output": "Success. Updated", "exit_code": 0}))[-1].kind == "command"
     # string exit codes (defensive) are normalised
     assert _cs.parse_events(_line({"type": "command_execution", "command": "pytest -q", "aggregated_output": "1 passed", "exit_code": "0"}))[0].exit_code == 0
 
@@ -183,7 +183,7 @@ def test_defensive_guard_spends_its_budget_on_distinct_reasons_only():
 
 def test_defensive_profile_is_selectable_and_unpaid(tmp_path):
     from te_bench.arms import ARMS, ARM_ORDER
-    from tokeneconomizer.config import needs_optimizer, SpiralConfig
+    from te_bench.config import needs_optimizer, SpiralConfig
     c = ARMS["codex-spiral-defensive"].cfg()
     assert c.spiral.codex_spiral and c.spiral.codex_spiral_profile == "defensive"
     assert needs_optimizer(c) is False and "codex-spiral-defensive" in ARM_ORDER
@@ -199,7 +199,6 @@ def test_defensive_profile_is_selectable_and_unpaid(tmp_path):
     pol = stage.run_kwargs({"instance_id": "x"})["codex_spiral_policy"]
     assert pol.reverify_loop_enabled and pol.runaway_enabled and pol.nudge_budget == 2
     assert pol.post_green_finalize_enabled and pol.post_green_finalize_require_cleared_failures
-    assert not pol.effort_rescue_enabled and pol.resume_effort == ""
 
 
 def test_both_guards_expose_everything_the_shared_task_loop_reads():
@@ -207,12 +206,11 @@ def test_both_guards_expose_everything_the_shared_task_loop_reads():
 
     The loop logs `guard.segment` on every nudge (`_log(... guard.segment)`), so the guard
     must expose it, and every other attribute the loop reads. Rather than pin one name,
-    read the attributes the loop actually touches out of its source and require both guard
-    classes to carry them.
+    read the attributes the loop actually touches out of its source and require the Codex
+    guard to carry every one of them.
     """
     import inspect, re
     from te_harness import swebench as sw
-    from te_bench import nudge_guard as generic
 
     src = inspect.getsource(sw.ClaudeSwebenchRunner.run_task)
     names = set(re.findall(r"(?<![\w.])guard\.([a-z_][a-z0-9_]*)", src))
@@ -240,7 +238,7 @@ def test_the_codex_envelope_is_advanced_in_the_unit_its_trigger_compares(tmp_pat
     ~45% above the count it is compared to and few tasks ever reach the gate. The stage
     must feed the tracker the trigger's own unit.
     """
-    from tokeneconomizer.config import SpiralConfig
+    from te_bench.config import SpiralConfig
     from te_bench.spiral_stage import SpiralStage
     cfg = SpiralConfig(codex_spiral=True, codex_spiral_profile="defensive")
     stage = SpiralStage(cfg, max_turns=80, agent="codex")

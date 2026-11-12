@@ -11,6 +11,8 @@ kept being prevented) on at least FIRE_GATE of the tasks that exercised it.
 """
 import os
 
+from ..names import repo_filename
+
 # ---- lifecycle knobs (the validated replay constants) ----------------------
 K_PROMOTE   = 3      # confirmations (drifted, where drift applies) to promote -> ACTIVE
 GAMMA       = 0.8    # recency decay per task-ago
@@ -21,18 +23,16 @@ FIRE_GATE   = 0.40   # inject only if firing rate on this repo >= 40%
 FIRE_MIN_N  = 4      # ...measured over at least this many exercised tasks
 
 
+def state_path(root, subdir, repo):
+    """`<root>/<subdir>/<repo>.json`, the directory made: where a distiller keeps a repo's facts."""
+    d = os.path.join(root, subdir)
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, repo_filename(repo) + ".json")
+
+
 def edited_pyfiles(calls):
-    fs = set()
-    for tool, args, _ in calls:
-        if tool in ("edit", "multiedit", "write", "create", "str_replace_editor"):
-            p = args.get("file_path") or args.get("path") or ""
-            if p.endswith(".py"):
-                fs.add(os.path.basename(p))
-        elif tool == "apply_patch":
-            for p in args.get("paths") or ():
-                if p.endswith(".py"):
-                    fs.add(os.path.basename(p))
-    return fs
+    """The Python files among `edited_files` (a basename ends in .py iff its path does)."""
+    return {f for f in edited_files(calls) if f.endswith(".py")}
 
 
 def edited_files(calls):
@@ -81,7 +81,7 @@ class Lifecycle:
         kept = []
         for idx, fs in self.confirms:
             fs = set(fs)
-            if not fs or all(len(fs & set(k)) == 0 for _, k in kept):
+            if not fs or all(fs.isdisjoint(k) for _, k in kept):
                 kept.append((idx, fs))
         return len(kept)
 

@@ -11,17 +11,14 @@ then stop it (headless) or tell the person (interactive).
 Stdlib only; never imports the plugin runtime.
 """
 from .envelope import (EnvelopeTracker, base_thresholds, load_envelope, record_turn,
-                       save_envelope, thresholds)
+                       thresholds)
 from .judge import llm_nudge_writer, llm_stuck_judge
-from .rules import (DEFAULT_THRESHOLDS, SPIRAL_LEVELS, assess_abort, gate_for_judge, is_stuck,
-                    nudge_text, scaled_thresholds)
-from .shell_edits import fold_shell_edits, shell_edit_targets
-from .state import SpiralState, canon_tool, completed_calls, state_from_trajectory
+from .rules import DEFAULT_THRESHOLDS, gate_for_judge, scaled_thresholds
+from .shell_edits import shell_edit_targets
+from .state import SpiralState, state_from_trajectory
 from .turn import VERIFY_RE, TurnGuard
 
-__all__ = ["EnvelopeTracker", "base_thresholds", "load_envelope", "record_turn",
-           "save_envelope", "thresholds", "llm_nudge_writer", "llm_stuck_judge",
-           "DEFAULT_THRESHOLDS", "SPIRAL_LEVELS", "assess_abort", "gate_for_judge", "is_stuck",
-           "nudge_text", "scaled_thresholds", "fold_shell_edits", "shell_edit_targets",
-           "SpiralState", "canon_tool", "completed_calls", "state_from_trajectory",
+__all__ = ["EnvelopeTracker", "base_thresholds", "load_envelope", "record_turn", "thresholds",
+           "llm_nudge_writer", "llm_stuck_judge", "DEFAULT_THRESHOLDS", "gate_for_judge",
+           "scaled_thresholds", "shell_edit_targets", "SpiralState", "state_from_trajectory",
            "VERIFY_RE", "TurnGuard"]

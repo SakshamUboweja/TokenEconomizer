@@ -29,14 +29,14 @@ a call the names the mechanisms know, so no mechanism needs a Hermes branch.
 import json
 import os
 import pathlib
-import re
 import sqlite3
+
+from .codex import PATCH_FILE_RE
 
 # Hermes's tool -> the name the mechanisms read. `patch` also has a mode that takes a whole V4A
 # patch, the format of Codex's `apply_patch` (below).
 _TOOL_NAMES = {"terminal": "bash", "read_file": "read", "write_file": "write", "patch": "edit",
                "search_files": "grep"}
-_PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Update|Add|Delete) File:\s*(.+?)\s*$", re.M)
 _WRAPPER = "<untrusted_tool_result"
 # The export names what it keeps: a session's row also holds its title, a description of its last
 # activity and its errors, and its messages their reasoning, all in the person's or the model's words,
@@ -56,7 +56,7 @@ def hermes_tool(name, args):
         inner = args.get("arguments")
         name, args = args["name"], inner if isinstance(inner, dict) else {}
     if name == "patch" and isinstance(args.get("patch"), str):
-        paths = _PATCH_FILE_RE.findall(args["patch"])
+        paths = PATCH_FILE_RE.findall(args["patch"])
         return "apply_patch", {"path": paths[0] if paths else "", "paths": paths}
     return _TOOL_NAMES.get(name, name), args
 
@@ -114,11 +114,6 @@ def _prompts(messages):
             seen.add(key)
             out.append(m)
     return out
-
-
-def hermes_session_info(path):
-    """The session's row ({id, source, cwd, ...}), {} if the export does not carry it."""
-    return _load(path)[0]
 
 
 def hermes_prompt_count(path):

@@ -246,7 +246,7 @@ def test_history_import_learns_facts_and_prices_the_sessions(tmp_path):
     env = dict(_env(state), DROID_SESSIONS_DIR=str(sessions))
     ctx = _droid_ctx(env, repo)
     assert len(history.plan(ctx)["sessions"]) == 5
-    res = history.run(ctx, now=time.time())
+    res = history.run(ctx)
     assert res["state"] == "done" and res["imported"] == 5
 
     assert history.describe(history.summary(ctx), "droid").startswith(
@@ -290,7 +290,7 @@ def test_the_session_start_hook_returns_the_learned_fact(tmp_path):
     for i in range(5):
         _write_session(sessions, f"s{i}", str(repo), TEST_CALLS, age_s=7200 + i * 60)
     env = dict(_env(state), DROID_SESSIONS_DIR=str(sessions))
-    assert history.run(_droid_ctx(env, repo), now=time.time())["imported"] == 5
+    assert history.run(_droid_ctx(env, repo))["imported"] == 5
 
     transcript = str(sessions / "ws" / "s5.jsonl")
     out = call(env, {"session_id": "s5", "transcript_path": transcript, "cwd": str(repo),

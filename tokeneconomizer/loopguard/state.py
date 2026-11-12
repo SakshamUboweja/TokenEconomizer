@@ -26,7 +26,8 @@ ERR_RE = re.compile(
     # failure is known by, and so which failures count as repeats).
     r"^# fail [1-9]|^not ok \d|\b[1-9]\d* (?:failing|failures?)\b|Failures: [1-9]|"
     r"^(?-i:--- FAIL: |FAIL\t|FAIL$))", re.IGNORECASE | re.MULTILINE)
-_EDIT_TOOLS = ("edit", "str_replace", "create")
+# Canonical names (`canon_tool`) of the tools that edit a file.
+EDIT_TOOLS = frozenset({"edit", "create"})
 # Tools whose output is the content of files, not the outcome of running anything: a test file
 # full of `assert` read back is not a failure, nor is reading it twice a repeated one.
 _CONTENT_TOOLS = ("view", "grep", "glob")
@@ -111,14 +112,13 @@ def completed_calls(line, pend):
                     c = "\n".join(x.get("text", "") for x in c if isinstance(x, dict))
                 out.append((canon_tool(info["name"]), info.get("args") or {},
                             c if isinstance(c, str) else ""))
-        return out
     return out
 
 
 def basename(p):
     """The last component of a path in either separator: Claude Code on Windows names the file
     an edit tool changed `C:\\repo\\pkg\\mod.py`, and a shell edit of it `pkg/mod.py`."""
-    return p.replace("\\", "/").rstrip("/").split("/")[-1] if p else (p or "")
+    return p.replace("\\", "/").rstrip("/").split("/")[-1] if p else ""
 
 
 def _failure_sig(text):
@@ -180,8 +180,8 @@ class SpiralState:
         self.turns += 1
         args = args if isinstance(args, dict) else {}
         tool_name = canon_tool(tool_name)   # accept Copilot- or Claude-named tools
-        action = tool_name or "?"
-        if tool_name in _EDIT_TOOLS:
+        action = tool_name
+        if tool_name in EDIT_TOOLS:
             b = basename(args.get("path") or args.get("filePath")
                           or args.get("file_path") or "")
             if b:
@@ -227,7 +227,7 @@ class SpiralState:
                 f"repeated_identical_failures={self.repeated_fail_sigs} "
                 f"stagnation={self.stagnation:.2f}")
         if envelope:
-            ratio = self.turns / envelope if envelope else 0
+            ratio = self.turns / envelope
             head += (f"\nrepo_context: tasks here usually RESOLVE within ~{envelope:.0f} "
                      f"turns; this trajectory is at {self.turns} turns = {ratio:.1f}x that "
                      f"typical length. Tests are still NOT green. A trajectory far past "
@@ -243,10 +243,9 @@ class SpiralState:
                 "repeated_fail_sigs": self.repeated_fail_sigs}
 
 
-def state_from_trajectory(path, load_trajectory=None):
-    """The final `SpiralState` of a saved session log (`trace.load_trajectory` by default)."""
-    load_trajectory = load_trajectory or _load_trajectory
+def state_from_trajectory(path):
+    """The final `SpiralState` of a saved session log (read with `trace.load_trajectory`)."""
     st = SpiralState()
-    for name, args, res, ok in load_trajectory(path):
+    for name, args, res, ok in _load_trajectory(path):
         st.update(name, args, res, failed=None if ok is None else not ok)
     return st

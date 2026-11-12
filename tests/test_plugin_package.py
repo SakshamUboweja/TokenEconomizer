@@ -251,7 +251,7 @@ def test_the_bundle_runs_without_a_checkout(tmp_path):
 
 # ---- the layering the README promises ------------------------------------------------------
 MECHANISMS = ("microskills", "toolprune", "loopguard", "trace")
-CORE_MODULES = ("config.py", "domain.py", "ledger.py", "pricing.py", "stage.py")
+CORE_MODULES = ("config.py", "domain.py", "ledger.py", "pricing.py")
 
 
 def _imports(path):
@@ -291,7 +291,7 @@ def test_the_mechanisms_never_import_the_plugin_runtime():
                 parts = mod.split(".")
                 reaches_top = level == depth + 1
                 assert not (reaches_top and parts[0] == "plugin"), f"{path} imports .{mod}"
-    probe = ("import sys, tokeneconomizer, tokeneconomizer.domain, tokeneconomizer.stage\n"
+    probe = ("import sys, tokeneconomizer, tokeneconomizer.config, tokeneconomizer.domain\n"
              + "".join(f"import tokeneconomizer.{m}\n" for m in MECHANISMS)
              + "print(sorted(m for m in sys.modules if m.startswith('tokeneconomizer.plugin') "
                "or m.split('.')[0] in ('te_bench', 'te_harness', 'te_live')))")
