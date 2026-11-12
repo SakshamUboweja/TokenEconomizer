@@ -15,8 +15,6 @@ import contextlib
 import json
 import os
 import sys
-import time
-import traceback
 
 
 def _truthy(v):
@@ -51,12 +49,8 @@ def run(payload, env, host_hint=None):
 
 def _record_error(env):
     try:
-        from .paths import state_root
-        root = state_root(env)
-        os.makedirs(root, exist_ok=True)
-        with open(os.path.join(root, "errors.log"), "a", encoding="utf-8") as fh:
-            fh.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')} pid={os.getpid()}\n")
-            fh.write(traceback.format_exc())
+        from .paths import record_error, state_root
+        record_error(state_root(env))
     except Exception:
         pass
 

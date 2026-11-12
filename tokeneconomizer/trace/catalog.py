@@ -17,6 +17,8 @@ import json
 import os
 import re
 
+from .jsonl import parse
+
 # Codex ships a fixed default tool surface (it does not dump JSON tool schemas into a
 # debug log). Inlined here -- verbatim from the original CodexDriver.DEFAULT_TOOL_CATALOG
 # -- so catalog-size telemetry reflects what is actually loaded (and prunable) without a
@@ -119,16 +121,8 @@ def parse_tool_catalog_claude(transcript_text, max_desc=200, snapshot=None):
         return {}
     snap = snapshot if snapshot is not None else _load_claude_catalog_snapshot()
     names = []
-    for line in transcript_text.splitlines():
-        line = line.strip()
-        if not line or '"type"' not in line or '"system"' not in line:
-            continue
-        try:
-            ev = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(ev, dict) and ev.get("type") == "system" and isinstance(
-                ev.get("tools"), list):
+    for ev in parse(transcript_text.splitlines(), '"system"'):
+        if ev.get("type") == "system" and isinstance(ev.get("tools"), list):
             names = ev["tools"]
             break
     return {n: (snap.get(n, "") or "")[:max_desc] for n in names}
@@ -197,16 +191,7 @@ def parse_tool_names_copilot(transcript_text):
     this reflects what the agent really had, not a static default surface.
     """
     names = set()
-    for line in (transcript_text or "").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            ev = json.loads(line)
-        except Exception:
-            continue
-        if not isinstance(ev, dict):
-            continue
+    for ev in parse((transcript_text or "").splitlines()):
         for pcb in ((ev.get("data") or {}).get("promptCacheBreakState") or []):
             for model in (pcb.get("models") or {}).values():
                 for tool in (model.get("tools") or []):

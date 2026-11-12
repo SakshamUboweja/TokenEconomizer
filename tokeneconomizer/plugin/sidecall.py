@@ -67,6 +67,7 @@ import subprocess
 import tempfile
 
 from .. import trace
+from ..trace.jsonl import parse as parse_jsonl
 from . import accounting
 
 TIMEOUT_S = 180
@@ -316,11 +317,7 @@ def codex_call(prompt, model="", cli="codex", timeout=TIMEOUT_S, effort=""):
         out = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
                              timeout=timeout, env=_env(), cwd=cwd)
     text, usage = "", None
-    for line in (out.stdout or "").splitlines():
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
+    for ev in parse_jsonl((out.stdout or "").splitlines()):
         item = ev.get("item") or {}
         if ev.get("type") == "item.completed" and item.get("type") == "agent_message":
             text = ev["item"].get("text") or text
@@ -711,7 +708,6 @@ def copilot_model(paid_model="", env=None):
 
 
 def copilot_call(prompt, model="", cli="copilot", timeout=TIMEOUT_S):
-    from .. import trace
     from . import hosts
     model = copilot_model(model)
     cmd = [*program(cli), "-p", prompt, "--output-format", "json", "--no-color",
@@ -727,11 +723,7 @@ def copilot_call(prompt, model="", cli="copilot", timeout=TIMEOUT_S):
         out = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
                              timeout=timeout, env=_env(), cwd=cwd, stdin=subprocess.DEVNULL)
     text, sid = "", None
-    for line in (out.stdout or "").splitlines():
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
+    for ev in parse_jsonl((out.stdout or "").splitlines()):
         if ev.get("type") == "assistant.message":
             text = (ev.get("data") or {}).get("content") or text
         elif ev.get("type") == "result":

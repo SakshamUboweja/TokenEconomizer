@@ -18,6 +18,8 @@ nothing about another's turn scale).
 import hashlib
 import os
 import re
+import time
+import traceback
 from dataclasses import dataclass
 
 HOME_ENV = "TOKENECONOMIZER_HOME"
@@ -30,6 +32,32 @@ def state_root(env=None):
     env = os.environ if env is None else env
     root = env.get(HOME_ENV) or os.path.join(os.path.expanduser("~"), ".tokeneconomizer")
     return os.path.abspath(root)
+
+
+def write_atomic(path, text, mode=None):
+    """Write `text` to `path` through a temporary file and a rename, so a reader never sees
+    half a file. `mode`, when given, is set before the file appears."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    if mode is not None:
+        os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def record_error(root, label=""):
+    """Append the exception being handled to `<root>/errors.log`, which `te doctor` shows.
+
+    For code that fails open: it never raises, so a hook that could not log still answers."""
+    tag = f" ({label})" if label else ""
+    try:
+        os.makedirs(root, exist_ok=True)
+        with open(os.path.join(root, "errors.log"), "a", encoding="utf-8") as fh:
+            fh.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')} pid={os.getpid()}{tag}\n")
+            fh.write(traceback.format_exc())
+    except Exception:
+        pass
 
 
 def secure_root(env=None):
@@ -77,12 +105,7 @@ def ensure_launcher(env=None):
                 return path
     except OSError:
         pass
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = "%s.%d.tmp" % (path, os.getpid())
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(body)
-    os.chmod(tmp, 0o700)
-    os.replace(tmp, path)
+    write_atomic(path, body, mode=0o700)
     return path
 
 

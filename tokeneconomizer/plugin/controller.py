@@ -25,12 +25,11 @@ changed course; `shadow` computes and logs every decision without acting on any 
 import hashlib
 import os
 import time
-import traceback
 
 from .. import loopguard
 from . import denylist, fold, history, hookqueue, repomap, repos, sidecall
 from .hosts import merge_outputs
-from .paths import ensure_launcher
+from .paths import ensure_launcher, record_error
 
 TURN_HISTORY = 200
 
@@ -169,7 +168,7 @@ class LiveController:
                 note = history.notice(self.ctx)
             except Exception:           # a malformed history.json must not cost the output
                 note = None
-                self._record_error()
+                record_error(self.ctx.root)
             if note:
                 outputs.append(self.host.notice(note))
 
@@ -191,20 +190,10 @@ class LiveController:
         try:
             history.maybe_start(self.ctx)
         except Exception:
-            self._record_error()
+            record_error(self.ctx.root)
         # Not while an import of earlier sessions runs: it folds these once it is done.
         fold.spawn_fold(self.ctx, fold.pending_sessions(self.ctx, exclude=(self.sid,)))
         return merge_outputs(*outputs)
-
-    def _record_error(self):
-        """A traceback in `errors.log` for a step that failed open without failing the hook."""
-        try:
-            os.makedirs(self.ctx.root, exist_ok=True)
-            with open(os.path.join(self.ctx.root, "errors.log"), "a", encoding="utf-8") as fh:
-                fh.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')} pid={os.getpid()}\n")
-                fh.write(traceback.format_exc())
-        except Exception:
-            pass
 
     def _toolprune_notices(self, seen):
         """The deny list's lines at session start, each said once: what `auto` removed from this

@@ -145,12 +145,6 @@ class LiveAdapter:
         extra = COPILOT_PROTECTED if self.host.name == "copilot" else frozenset()
         return _Protected(PROTECTED_TOOLS | INTERACTIVE_PROTECTED | extra, self.protect)
 
-    def inapplicable_tools(self):
-        return ()                       # nothing is inapplicable by construction here
-
-    def hardcoded_exclusions(self, used_tools):
-        return []
-
     # ---- loop guard ----
     def spiral_snapshot(self, path):
         return state_from_trajectory(path).snapshot()

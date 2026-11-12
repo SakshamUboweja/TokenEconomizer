@@ -19,7 +19,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import adapter as live_adapter
-from .denylist import CODEX_TOGGLES, write_json as _write_json
+from .denylist import CODEX_TOGGLES, codex_features_list, write_json as _write_json
 from .sidecall import claude_cli, claude_flags, claude_json, program
 
 
@@ -39,13 +39,8 @@ def verify_codex(repo_root, capabilities, cli="codex", timeout=30):
     is unavailable. Free: it reads configuration and calls no model."""
     feats = [k for c in capabilities for t, k, v in CODEX_TOGGLES.get(c, ())
              if t == "features"]
-    if not feats or not shutil.which(cli):
-        return None
-    try:
-        out = subprocess.run([*program(cli), "features", "list"], capture_output=True,
-                             encoding="utf-8", errors="replace", cwd=repo_root, timeout=timeout,
-                             env=dict(os.environ, TE_SIDECALL="1"))
-    except (OSError, subprocess.SubprocessError):
+    out = codex_features_list(repo_root, cli, timeout) if feats else None
+    if out is None:
         return None
     state = {}
     for line in (out.stdout or "").splitlines():

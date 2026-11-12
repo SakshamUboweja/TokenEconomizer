@@ -168,22 +168,24 @@ def _fold_toolprune(ctx, adapter, run_dir, session_id, transcript=None, workdir=
     before = dict(stage.tool_unused_streaks)
     stage.after_task({"instance_id": session_id},
                      {"untooled_excluded": stage._exclude_tools}, run_dir, srow)
-    for t, n in stage.tool_unused_streaks.items():
-        if n == 0:
-            prompt_streaks[t] = 0                          # used
-        elif n == before.get(t, 0) + 1:                    # unused this session
-            prompt_streaks[t] = prompt_streaks.get(t, 0) + (1 if prompts is None else prompts)
     # The same streaks over the plugin's own sessions alone, once history was imported.
     imported_n = int(st.get("imported_sessions", 0)) + bool(imported)
     live_streaks = {k: int(v) for k, v in (st.get("live_streaks") or {}).items()}
     live_prompts = {k: int(v) for k, v in (st.get("live_prompt_streaks") or {}).items()}
-    if not imported:
-        for t, n in stage.tool_unused_streaks.items():
-            if n == 0:
-                live_streaks[t] = live_prompts[t] = 0
-            elif n == before.get(t, 0) + 1:
-                live_streaks[t] = live_streaks.get(t, 0) + 1
-                live_prompts[t] = live_prompts.get(t, 0) + (1 if prompts is None else prompts)
+    weight = 1 if prompts is None else prompts
+    for t, n in stage.tool_unused_streaks.items():
+        used, unused = n == 0, n == before.get(t, 0) + 1          # this session
+        if used:
+            prompt_streaks[t] = 0
+        elif unused:
+            prompt_streaks[t] = prompt_streaks.get(t, 0) + weight
+        if imported:
+            continue
+        if used:
+            live_streaks[t] = live_prompts[t] = 0
+        elif unused:
+            live_streaks[t] = live_streaks.get(t, 0) + 1
+            live_prompts[t] = live_prompts.get(t, 0) + weight
     sessions = int(st.get("sessions", 0)) + 1
     raw = [t for t in stage.build_tools({"instance_id": f"after-{session_id}"}, sessions) or []
            if enough_evidence(stage.tool_unused_streaks.get(t, 0), prompt_streaks.get(t, 0),

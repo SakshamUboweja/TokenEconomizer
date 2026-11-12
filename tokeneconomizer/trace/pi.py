@@ -13,7 +13,7 @@ fields is direct.
 import json
 import os
 
-from .jsonl import records
+from .jsonl import parse, records
 
 
 def _pi_entries(path):
@@ -118,12 +118,8 @@ def pi_json_reply(stdout):
     the usage of every assistant message in ledger fields, with Pi's model id and its own cost
     estimate (`cost_usd`). `usage` is None when the run produced no assistant message."""
     text, usage = "", None
-    for line in (stdout or "").splitlines():
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
-        m = ev.get("message") if isinstance(ev, dict) and ev.get("type") == "message_end" else None
+    for ev in parse((stdout or "").splitlines()):
+        m = ev.get("message") if ev.get("type") == "message_end" else None
         if not isinstance(m, dict) or m.get("role") != "assistant":
             continue
         text = _pi_text(m.get("content")) or text

@@ -7,7 +7,7 @@ events locally and this reader pairs each tool request with its observed result.
 import json
 import os
 
-from .jsonl import lines as _lines
+from .jsonl import records as _records
 
 
 def _response_text(response):
@@ -32,18 +32,8 @@ def _exit_code(response):
 
 def cursor_events_to_claude(path, out_path):
     """Write the normalized trajectory. Return the number of records, or None if unreadable."""
-    try:
-        lines = _lines(path)
-    except OSError:
-        return None
-    if not lines:
-        return None
     out = []
-    for line in lines:
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
+    for event in _records(path):
         name = event.get("hook_event_name")
         if name == "UserPromptSubmit":
             prompt = event.get("prompt")
@@ -88,22 +78,10 @@ def cursor_prompt_count(path):
     Only each row's role is read; no prompt text is kept.
     """
     count, agent = 0, None
-    for line in _lines(path):
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
+    for event in _records(path):
         count += event.get("hook_event_name") == "UserPromptSubmit"
         if isinstance(event.get("agent_transcript"), str):
             agent = event["agent_transcript"]
     if count or not agent or os.path.realpath(agent) == os.path.realpath(path):
         return count
-    for line in _lines(agent):
-        if '"role"' not in line:
-            continue
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        count += isinstance(row, dict) and row.get("role") == "user"
-    return count
+    return sum(1 for row in _records(agent, '"role"') if row.get("role") == "user")

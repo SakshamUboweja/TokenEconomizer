@@ -29,6 +29,7 @@ import os
 import re
 import time
 
+from .paths import record_error
 from .store import Store
 
 # Seconds a hook waits for its session's lock. Each stays short of the shortest timeout any agent
@@ -108,7 +109,7 @@ def _replay(ctrl, payload):
             other.replaying = True
             handler()
     except Exception:
-        ctrl._record_error()
+        record_error(ctrl.ctx.root)
 
 
 def _prune(base):
