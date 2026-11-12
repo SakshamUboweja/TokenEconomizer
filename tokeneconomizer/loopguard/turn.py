@@ -70,8 +70,9 @@ _RANK = {"own": 0, "hidden": 1, "mixed": 2}
 
 def _pieces(cmd):
     """`cmd` as its commands and the separators between them (`[cmd, sep, cmd, ...]`), with
-    quoted text masked, and whether it sets `pipefail`. A command recorded as `bash -lc
-    '<script>'` (Codex) is split by its script."""
+    quoted text masked and heredoc bodies left out, and whether it sets `pipefail`. A command
+    recorded as `bash -lc '<script>'` (Codex) is split by its script: its heredocs are read
+    there, since one that ends the script closes on `EOF'`, not on a line of its own."""
     try:
         parts = shlex.split(cmd)
     except ValueError:
@@ -79,6 +80,7 @@ def _pieces(cmd):
     if (len(parts) >= 3 and os.path.basename(parts[0]) in _SHELLS
             and parts[1].startswith("-") and "c" in parts[1]):
         cmd = parts[2]
+    cmd = _split_heredocs(cmd)[0]       # a heredoc's lines are input, not commands
     pieces = _SEP_RE.split(re.sub(r"[(){}]", " ", _QUOTED_RE.sub("Q", cmd)))
     while len(pieces) > 1 and not pieces[-1].strip():      # a trailing `;` or newline
         del pieces[-2:]
@@ -122,7 +124,7 @@ def exit_status_covers(cmd):
     lines are the input of the command that reads them, not commands of their own."""
     if not isinstance(cmd, str) or not cmd.strip():
         return False
-    pieces, pipefail = _pieces(_split_heredocs(cmd)[0])
+    pieces, pipefail = _pieces(cmd)
     for i in range(0, len(pieces) - 1, 2):              # every command but the last
         sep = pieces[i + 1]
         if sep == "&&" or (pipefail and sep in ("|", "|&")):
@@ -243,6 +245,7 @@ class TurnGuard:
         self.verifications = int(d.get("verifications", 0))
         self.judge_pending = d.get("judge_pending") or None   # {"id", "since", "segment"}
         self.nudge_ready = d.get("nudge_ready") or None       # a redirect the judge wrote
+        self.held = d.get("held") or None     # a decision no hook could say yet: [action, reason]
 
     def to_dict(self):
         return {"turn_key": self.turn_key, "st": state_to_dict(self.st),
@@ -254,7 +257,8 @@ class TurnGuard:
                 "judge_calls": self.judge_calls, "last_edit": self.last_edit,
                 "last_verify": self.last_verify, "last_verify_failed": self.last_verify_failed,
                 "edits": self.edits, "verifications": self.verifications,
-                "judge_pending": self.judge_pending, "nudge_ready": self.nudge_ready}
+                "judge_pending": self.judge_pending, "nudge_ready": self.nudge_ready,
+                "held": self.held}
 
     # ---- outcome tracking for the ended-green proxy ----------------------------------
     def _track(self, canon, verifies, result, exit_code, shell_edits):
@@ -371,7 +375,7 @@ class TurnGuard:
         fold_shell_edits(self.whole, shell_edits)
         self.cum_turns += 1
         self._track(canon, status is not None, result, exit_code, shell_edits)
-        if self.aborted:
+        if self.aborted or self.held:
             return None
 
         backstop = backstop_for(thr, envelope)

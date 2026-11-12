@@ -5,6 +5,7 @@ the information needed for micro-skills and loop detection, so the host adapter 
 events locally and this reader pairs each tool request with its observed result.
 """
 import json
+import os
 
 from .jsonl import records as _records
 
@@ -69,5 +70,18 @@ def cursor_events_to_claude(path, out_path):
 
 
 def cursor_prompt_count(path):
-    """Count actual prompt-submission events recorded by the adapter."""
-    return sum(1 for e in _records(path) if e.get("hook_event_name") == "UserPromptSubmit")
+    """Count the session's prompts.
+
+    The adapter's own spool counts the `beforeSubmitPrompt` events it recorded. Headless
+    `cursor-agent -p` never delivers that event, so with none recorded the count falls back to
+    the user rows of Cursor's own transcript, whose path the spool carries as `agent_transcript`.
+    Only each row's role is read; no prompt text is kept.
+    """
+    count, agent = 0, None
+    for event in _records(path):
+        count += event.get("hook_event_name") == "UserPromptSubmit"
+        if isinstance(event.get("agent_transcript"), str):
+            agent = event["agent_transcript"]
+    if count or not agent or os.path.realpath(agent) == os.path.realpath(path):
+        return count
+    return sum(1 for row in _records(agent, '"role"') if row.get("role") == "user")

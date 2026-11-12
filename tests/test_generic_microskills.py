@@ -3,6 +3,8 @@ well as tests, every edited file -- while the experiments keep the paper's readi
 import hashlib
 import json
 
+import pytest
+
 from tokeneconomizer.microskills import GENERIC, NODE_WEB, PYTHON_GIT, observe
 from tokeneconomizer.microskills import distiller as dist
 from tokeneconomizer.microskills import envfacts as ef
@@ -116,6 +118,93 @@ def test_an_injected_absent_tool_counts_only_sessions_that_ran_a_check(tmp_path)
         ("Bash", {"command": "mypy ."}, "Success: no issues found in 3 source files")]),
         iid="a9")
     assert d.last_digest["verdicts"]["absent_tool:ruff"] == ("confirm", True, True)
+
+
+def test_module_and_launcher_runs_name_the_tool_they_run():
+    """`python -m mypy`, `uvx ruff` and `pipx run black` run the tool, not the interpreter or
+    the launcher, so they pool with the bare `mypy`, `ruff`, `black`."""
+    assert _form("python -m mypy .", GENERIC) == ("run_build", "python -m mypy")
+    assert _form("python3 -m ruff check .", GENERIC) == ("run_build", "python3 -m ruff")
+    assert _form("uvx ruff check .", GENERIC) == ("run_build", "uvx ruff")
+    assert _form("uv tool run ruff check .", GENERIC) == ("run_build", "uvx ruff")
+    assert _form("pipx run black .", GENERIC) == ("run_build", "pipx run black")
+    assert _form("uvx pytest -q", GENERIC) == ("run_tests", "uvx pytest")
+    assert _form("cd pkg && python -m mypy .", GENERIC) == ("run_build", "cd pkg && python -m mypy")
+    # A module that is not a checker is still the interpreter.
+    assert _form("python -m json.tool f.json", GENERIC) == ("run_interpreter", "python")
+    assert not observe.is_bare("uvx ruff") and not observe.is_bare("pipx run black")
+    # The experiments' vocabulary reads as it did.
+    assert _form("python -m mypy .", PYTHON_GIT) == ("run_interpreter", "python")
+    assert _form("uvx ruff check .", PYTHON_GIT) is None
+    assert _form("pipx run pytest", PYTHON_GIT) is None
+
+
+REPAIRS = [("mypy .", "python -m mypy ."), ("mypy .", "python3 -m mypy ."),
+           ("ruff check .", "python -m ruff check ."), ("ruff check .", "uvx ruff check ."),
+           ("ruff check .", "uv tool run ruff check ."), ("black .", "pipx run black ."),
+           ("ruff check .", "uv run ruff check ."), ("ruff check .", ".venv/bin/ruff check .")]
+
+
+@pytest.mark.parametrize("bare,working", REPAIRS)
+def test_a_tool_that_works_another_way_is_not_learned_as_absent(tmp_path, bare, working):
+    """The bare tool is not found, but the same tool works through `python -m`, a launcher or
+    an environment: never "`X …` fails here with command not found" on its own."""
+    tool = bare.split()[0]
+    d = ef.EnvFactsDistiller("acme/py", vocab=GENERIC)
+    for i in range(6):
+        d.render()
+        d.update(_session(tmp_path, i, [
+            ("Edit", {"file_path": f"/r/pkg/m{i}.py", "old_string": "a", "new_string": "b"}, "ok"),
+            ("Bash", {"command": bare}, f"Exit code 127\nbash: {tool}: command not found"),
+            ("Bash", {"command": working}, "All checks passed!")]), iid=f"s{i}")
+    assert f"absent_tool:{tool}" not in d.facts
+
+
+@pytest.mark.parametrize("working", ["python -m mypy .", "uvx mypy .", "pipx run mypy ."])
+def test_the_working_form_is_named_as_the_repair(tmp_path, working):
+    d = ef.EnvFactsDistiller("acme/py", vocab=GENERIC)
+    for i in range(6):
+        d.render()
+        d.update(_session(tmp_path, i, [
+            ("Edit", {"file_path": f"/r/pkg/m{i}.py", "old_string": "a", "new_string": "b"}, "ok"),
+            ("Bash", {"command": "mypy ."}, "Exit code 127\nbash: mypy: command not found"),
+            ("Bash", {"command": working}, "Success: no issues found in 3 source files")]),
+            iid=f"s{i}")
+    form = working.rsplit(" ", 1)[0]
+    assert f"`mypy …` fails here with command not found; `{form} …` works." in d.render()
+
+
+@pytest.mark.parametrize("working", ["python -m mypy .", "uvx mypy .", "pipx run mypy ."])
+def test_an_absent_tool_retires_when_it_runs_another_way(tmp_path, working):
+    d = ef.EnvFactsDistiller("acme/py", vocab=GENERIC)
+    for i in range(4):
+        d.render()
+        d.update(_session(tmp_path, i, [
+            ("Edit", {"file_path": f"/r/pkg/m{i}.py", "old_string": "a", "new_string": "b"}, "ok"),
+            ("Bash", {"command": "mypy ."}, "Exit code 127\nbash: mypy: command not found")]),
+            iid=f"a{i}")
+    assert d.facts["absent_tool:mypy"].state == "ACTIVE"
+    d.render()
+    d.update(_session(tmp_path, 9, [
+        ("Edit", {"file_path": "/r/pkg/z.py", "old_string": "a", "new_string": "b"}, "ok"),
+        ("Bash", {"command": working}, "Success: no issues found in 3 source files")]), iid="a9")
+    assert d.facts["absent_tool:mypy"].state == "RETIRED"
+
+
+@pytest.mark.parametrize("failing,other", [("python -m mypy .", "python -m ruff check ."),
+                                           ("uvx mypy .", "uvx ruff check ."),
+                                           ("pipx run mypy .", "pipx run ruff check .")])
+def test_a_shared_launcher_does_not_make_one_tool_repair_another(tmp_path, failing, other):
+    """`python -m ruff` working says nothing about a `python -m mypy` that failed: they share
+    only the launcher."""
+    d = ef.EnvFactsDistiller("acme/py", vocab=GENERIC)
+    for i in range(6):
+        d.render()
+        d.update(_session(tmp_path, i, [
+            ("Edit", {"file_path": f"/r/pkg/m{i}.py", "old_string": "a", "new_string": "b"}, "ok"),
+            ("Bash", {"command": failing}, "Exit code 1\n/usr/bin/python: No module named mypy"),
+            ("Bash", {"command": other}, "All checks passed!")]), iid=f"s{i}")
+    assert not [f for f in d.facts if f.startswith("form_repair")]
 
 
 def test_every_edited_file_counts_in_the_generic_reading(tmp_path):
@@ -246,3 +335,27 @@ def test_the_generic_digest_keeps_line_breaks_of_list_tool_results(tmp_path):
     dg = dist.build_generic_digest("acme/web", p, "s0")
     assert dg["failed_commands"] == [
         {"cmd": "npm run lint", "error": "error: missing script: lint"}]
+
+
+def test_an_output_extractor_authored_on_a_tick_reads_every_output_line(tmp_path, monkeypatch):
+    """An extractor the proposer authors is computed over the window it was authored from, so a
+    fact of the same tick can name it. Over the window's saved blobs it must read what it reads
+    over a live session: the whole output, not the first line of output per command line."""
+    monkeypatch.setattr(dist, "PROPOSE_EVERY", 3)
+
+    def runner(prompt, model):
+        return json.dumps({
+            "extractors": [{"name": "missing_module", "kind": "out_regex",
+                            "pattern": r"Cannot find module"}],
+            "facts": [{"id": "install-first", "claim": "npm test needs npm install first",
+                       "injection": "Run `npm install` before `npm test` in a fresh checkout.",
+                       "detector": {"scope": "missing_module", "confirm": r"Cannot find module"},
+                       "cite": ["s0", "s1"]}]}), 100.0
+    d = dist.Distiller("acme/web", runner=runner, vocab=GENERIC)
+    for i in range(2):
+        d.update(_session(tmp_path, i, [
+            ("Bash", {"command": "npm test"},
+             "> web@1.0.0 test\n> jest\n\nFAIL src/app.test.js\n"
+             "Cannot find module 'left-pad' from 'src/app.js'")]), iid=f"s{i}")
+    assert [dg["features"]["missing_module"] for dg in d.window] == [True, True]
+    assert "install-first" in d.facts

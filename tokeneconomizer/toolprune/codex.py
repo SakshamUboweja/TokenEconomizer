@@ -114,6 +114,7 @@ _SKILL_USE = re.compile(
 )
 _FAILED_STATUSES = frozenset(("failed", "error", "cancelled"))
 
+
 def task_hints(problem_statement):
     """Return the packages a task's issue text protects from demotion (image/skills)."""
     text = str(problem_statement or "")

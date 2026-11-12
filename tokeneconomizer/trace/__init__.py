@@ -6,9 +6,9 @@ here and nowhere else:
   * `calls`    -- `load_trajectory`: any agent's log as ordered `(name, args, result, ok)` calls;
                   `call_cwds`, `tool_usage`, `strip_rtk_prefix`;
   * `catalog`  -- the tool list a session loaded, from whichever source the agent publishes;
-  * `claude`, `codex`, `copilot`, `hermes`, `opencode`, `pi` -- each agent's own session file:
-                  usage, metadata, prompt-turns, and the conversions that let the readers above
-                  handle it.
+  * `antigravity`, `claude`, `codex`, `copilot`, `cursor`, `droid`, `grok`, `hermes`,
+                  `opencode`, `pi` -- each agent's own session file: usage, metadata,
+                  prompt-turns, and the conversions that let the readers above handle it.
 
 Stdlib only.
 """
@@ -19,11 +19,18 @@ from .claude import (claude_calls, claude_deferred_tools, claude_history_logs,
                      claude_prompt_count, claude_prompt_turns, claude_safe_session_id,
                      claude_session_usage, claude_tool_usage, claude_turn_answered,
                      claude_turn_interrupted)
-from .codex import (codex_capability_trace, codex_prompt_count, codex_rollout_to_exec,
-                    codex_session_usage)
-from .copilot import (copilot_mcp_servers, copilot_prompt_count, copilot_session_usage,
-                      copilot_turns, mcp_server_of)
+from .codex import (codex_capability_trace, codex_exec_calls, codex_prompt_count,
+                    codex_rollout_to_exec, codex_session_usage)
+from .copilot import (copilot_event_calls, copilot_mcp_servers, copilot_prompt_count,
+                      copilot_session_usage, copilot_turns, mcp_server_of)
+from .antigravity import (antigravity_prompt_count, antigravity_read,
+                          antigravity_session_to_claude, antigravity_session_usage)
 from .cursor import cursor_events_to_claude, cursor_prompt_count
+from .droid import (droid_log_head, droid_prompt_count, droid_prompt_turns,
+                    droid_safe_session_id, droid_session_to_claude, droid_session_usage,
+                    droid_sessions)
+from .grok import (grok_json_reply, grok_prompt_count, grok_result, grok_session_to_claude,
+                   grok_session_usage, grok_tool)
 from .hermes import (hermes_export, hermes_find_session, hermes_prompt_count, hermes_result,
                      hermes_row_usage, hermes_session_row, hermes_session_to_claude,
                      hermes_session_usage, hermes_tool)
@@ -38,11 +45,17 @@ __all__ = [
     "claude_project_folder", "claude_projects_dir", "claude_prompt_count", "claude_prompt_turns",
     "claude_safe_session_id", "claude_session_usage", "claude_tool_usage",
     "claude_turn_answered", "claude_turn_interrupted",
-    "codex_capability_trace", "codex_prompt_count", "codex_rollout_to_exec",
+    "codex_capability_trace", "codex_exec_calls", "codex_prompt_count", "codex_rollout_to_exec",
     "codex_session_usage",
-    "copilot_mcp_servers", "copilot_prompt_count", "copilot_session_usage", "copilot_turns",
-    "mcp_server_of",
+    "copilot_event_calls", "copilot_mcp_servers", "copilot_prompt_count",
+    "copilot_session_usage", "copilot_turns", "mcp_server_of",
+    "antigravity_prompt_count", "antigravity_read", "antigravity_session_to_claude",
+    "antigravity_session_usage",
     "cursor_events_to_claude", "cursor_prompt_count",
+    "droid_log_head", "droid_prompt_count", "droid_prompt_turns", "droid_safe_session_id",
+    "droid_session_to_claude", "droid_session_usage", "droid_sessions",
+    "grok_json_reply", "grok_prompt_count", "grok_result", "grok_session_to_claude",
+    "grok_session_usage", "grok_tool",
     "hermes_export", "hermes_find_session", "hermes_prompt_count", "hermes_result",
     "hermes_row_usage", "hermes_session_row", "hermes_session_to_claude",
     "hermes_session_usage", "hermes_tool",

@@ -22,7 +22,12 @@ from .jsonl import records as _records
 
 _CLAUDE_KEYS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
                 "output_tokens")
+# The part of `cache_creation_input_tokens` written to the 1-hour cache, which Anthropic bills
+# at 2x input where the 5-minute cache is 1.25x. A message's usage splits its cache writes in
+# `cache_creation: {ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}`.
+_CLAUDE_1H = "cache_creation_1h_input_tokens"
 CONVERSATION = ("assistant", "user")
+SYNTHETIC_MODEL = "<synthetic>"     # the model of an entry Claude Code wrote, not a model's reply
 
 
 def claude_calls(lines):
@@ -79,9 +84,18 @@ def _is_prompt(ev):
                                                                 "[Request interrupted"))
 
 
+def _is_notification(ev):
+    """Is this entry Claude Code telling the model that a background task finished? It starts a
+    turn, as a prompt does, but nobody typed it (2.1.317: `origin.kind` "task-notification")."""
+    origin = ev.get("origin")
+    return isinstance(origin, dict) and origin.get("kind") == "task-notification"
+
+
 def claude_prompt_count(transcript_path):
-    """How many prompts the person gave a Claude Code session (`_is_prompt`)."""
-    return sum(1 for ev in _records(transcript_path) if _is_prompt(ev))
+    """How many prompts the person gave a Claude Code session (`_is_prompt`, less the
+    background-task notifications)."""
+    return sum(1 for ev in _records(transcript_path)
+               if _is_prompt(ev) and not _is_notification(ev))
 
 
 # ---- the session logs Claude Code keeps -----------------------------------------------------
@@ -268,12 +282,26 @@ def claude_subagent_files(transcript_path):
     return sorted(glob.glob(os.path.join(stem, "subagents", "*.jsonl")))
 
 
+def _cache_write_1h(usage, counts):
+    """A message's 1-hour cache-write tokens, never more than the cache writes it reports: the
+    split is a breakdown of that total, and a notice with no usage of its own can carry one."""
+    split = usage.get("cache_creation")
+    if not isinstance(split, dict):
+        return 0
+    try:
+        n = int(split.get("ephemeral_1h_input_tokens") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(n, counts["cache_creation_input_tokens"]))
+
+
 def claude_session_usage(transcript_path):
     """Token breakdown of a Claude Code session, de-duplicated by assistant message id.
 
-    Returns the four breakdown fields `pricing.effective_tokens` reads, plus `model` (the most
-    used one), `requests` (distinct assistant messages carrying usage) and `files` read; the
-    session's subagents are part of it."""
+    Returns the four breakdown fields `pricing.effective_tokens` reads and the 1-hour share of
+    the cache writes (`cache_creation_1h_input_tokens`), plus `model` (the most used one),
+    `requests` (distinct assistant messages carrying usage, less the `<synthetic>` ones Claude
+    Code writes itself) and `files` read; the session's subagents are part of it."""
     files = [transcript_path] + claude_subagent_files(transcript_path)
     by_id, models, anon = {}, {}, 0
     for path in files:
@@ -284,16 +312,21 @@ def claude_session_usage(transcript_path):
             usage = msg.get("usage")
             if not isinstance(usage, dict):
                 continue
+            # Claude Code writes its own notices (an API error, "No response requested.") as
+            # assistant entries of model `<synthetic>` with zero usage: no request was made.
+            if msg.get("model") == SYNTHETIC_MODEL:
+                continue
             mid = msg.get("id")
             if not mid:
                 anon += 1
                 mid = f"anon-{path}-{anon}"
             # Later entries of the same message carry the final counts; keep the last.
             by_id[mid] = {k: int(usage.get(k) or 0) for k in _CLAUDE_KEYS}
+            by_id[mid][_CLAUDE_1H] = _cache_write_1h(usage, by_id[mid])
             model = msg.get("model")
             if model:
                 models[model] = models.get(model, 0) + 1
-    out = {k: sum(u[k] for u in by_id.values()) for k in _CLAUDE_KEYS}
+    out = {k: sum(u[k] for u in by_id.values()) for k in (*_CLAUDE_KEYS, _CLAUDE_1H)}
     out["requests"] = len(by_id)
     out["model"] = max(models, key=models.get) if models else None
     out["files"] = len([f for f in files if os.path.exists(f)])
