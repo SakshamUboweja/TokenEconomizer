@@ -218,7 +218,7 @@ def _still_eligible(ctx, item):
     """Why a planned session is no longer to be imported (a resumed plan), or None."""
     sid = ctx.host.safe_session_id(item.get("id")) if isinstance(item, dict) else None
     path = item.get("path") if isinstance(item, dict) else None
-    if sid is None or not isinstance(path, str) or os.path.basename(path) != f"{sid}.jsonl":
+    if sid is None or not isinstance(path, str) or not ctx.host.log_matches_id(path, sid):
         return "unsafe_id"
     if sid in (ctx.store.read("folded.json") or {}):
         return "already_folded"
@@ -512,7 +512,7 @@ def summary(ctx):
 # The agent's name as a person reads it, for the lines that name whose logs were read.
 HOST_LABEL = {"claude": "Claude Code", "codex": "Codex", "copilot": "Copilot CLI", "pi": "Pi",
               "opencode": "opencode", "cursor": "Cursor", "hermes": "Hermes Agent",
-              "droid": "Droid"}
+              "droid": "Droid", "muse": "Muse Code"}
 
 
 def describe(doc, host="claude"):

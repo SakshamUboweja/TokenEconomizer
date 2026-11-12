@@ -572,12 +572,13 @@ def pending_sessions(ctx, exclude=(), stale_s=STALE_S, now=None):
     return [sid for _, sid in sorted(out)]
 
 
-def spawn_fold(ctx, session_ids):
-    """Fold sessions in a detached process (inline when TE_FOLD_SYNC=1, for tests). Not while
-    an import of earlier sessions is under way: it folds them once it is done."""
+def spawn_fold(ctx, session_ids, inline=False):
+    """Fold sessions in a detached process (inline with `inline`, for an agent that stops what a
+    hook leaves running, or when TE_FOLD_SYNC=1, for tests). Not while an import of earlier
+    sessions is under way: it folds them once it is done."""
     if not session_ids or import_blocks(ctx):
         return None
-    if ctx.env.get("TE_FOLD_SYNC") == "1":
+    if inline or ctx.env.get("TE_FOLD_SYNC") == "1":
         return [fold_session(ctx, sid) for sid in session_ids]
     return ctx.spawn(["fold"] + [a for sid in session_ids for a in ("--session", sid)],
                      "fold.log")

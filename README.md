@@ -70,7 +70,7 @@ mechanisms:
 
 TokenEconomizer is a plugin for **Claude Code**, **Codex**, the **GitHub Copilot CLI** and **Pi**,
 with experimental support for **opencode**, **Cursor Agent**, **Grok Build**, **Hermes Agent**,
-the **Antigravity CLI** and **Factory Droid**. Each italic
+the **Antigravity CLI**, **Factory Droid** and Meta's **Muse Code**. Each italic
 letter above is a setting, shown with its default ([Settings](#settings)), and each mechanism can be turned on or
 off. The plugin announces each action in one line, and if any part of it fails, your session
 carries on as if it were not installed. Its model calls (the fact proposer, and the judge with the
@@ -185,6 +185,22 @@ micro-skills' paid proposer and the loop guard's judge stay off until `droid_sid
 (when on, they may use only Droid's read-only `Read` tool).
 See **[`docs/DROID.md`](docs/DROID.md)** for what works and how to import earlier sessions.
 
+**Muse Code** (Meta; experimental, not yet run against a live `muse`; micro-skills, the loop
+guard and session cost, not tool pruning)
+
+```sh
+git clone https://github.com/microsoft/TokenEconomizer.git
+cd TokenEconomizer
+python scripts/build_plugin.py
+muse plugins install dist/marketplace/tokeneconomizer
+muse plugins approve tokeneconomizer
+```
+
+Start a new Muse session (approved hooks load in the next one) and run
+`~/.tokeneconomizer/bin/te --host muse status` from a terminal in the repository. Muse has no
+per-repository tool setting, so tool pruning stays off, and the plugin's own model calls stay
+off until `muse_sidecall` is on. See **[`docs/MUSE.md`](docs/MUSE.md)**.
+
 **Cursor Agent** (experimental)
 
 ```sh
@@ -268,6 +284,7 @@ To update:
 |---|---|
 | Claude Code, Copilot CLI, opencode | `git pull` in the clone |
 | Factory Droid | `git pull` in the clone, then the `build_plugin.py --droid` and install lines again |
+| Muse Code | `git pull` in the clone, `python scripts/build_plugin.py`, then `muse plugins update tokeneconomizer` and `muse plugins approve tokeneconomizer` |
 | Hermes Agent | `git pull` in the clone, then `hermes gateway restart` |
 | Antigravity CLI | build the bundle again and `agy plugin install` it |
 | Codex | `git pull` in the clone, then the `codex plugin add` line again |
@@ -290,6 +307,7 @@ uninstalling, using Copilot with your own model key, and troubleshooting.
 | Hermes Agent (experimental) | 0.22.5 | not tested |
 | Antigravity CLI (experimental) | agy 1.5.1, macOS and Linux | not tested |
 | Factory Droid (experimental) | 0.233.0, macOS (below) | not tested |
+| Muse Code (experimental) | built against the 1.4.14 documentation; not yet run live (below) | not tested |
 
 The commands above were tested on the oldest and newest version in each range; newer versions
 have not been tested yet.
@@ -325,6 +343,11 @@ have not been tested yet.
   repeated it). Droid's TUI has no persistent per-tool setting (Factory issue #65), so tool
   pruning is not available; its session logs are read for micro-skills and the loop guard, and
   priced from the usage Droid writes beside each log. See [its notes](docs/DROID.md).
+- **Muse Code** (Meta) support is experimental and has **not been run against a real `muse`
+  yet**: the adapter follows Meta's published manual, changelog and SDK guides, and its tests
+  use sessions and hook payloads built from them. Muse clears its hooks' environment, so
+  `TE_*` variables do not reach them (use `te config set`). Tool pruning is not available. See
+  [its notes](docs/MUSE.md), which list what a live run still has to confirm.
 
 ### Everyday commands
 
@@ -342,13 +365,14 @@ commands. They have the same names on every agent; only the way you type them di
 | Hermes Agent | from a terminal: `~/.tokeneconomizer/bin/te --host hermes <command>` |
 | Antigravity CLI | from a terminal: `~/.tokeneconomizer/bin/te --host antigravity <command>` |
 | Factory Droid | `/tokeneconomizer-<command>` (e.g. `/tokeneconomizer-status`) |
+| Muse Code | from a terminal: `~/.tokeneconomizer/bin/te --host muse <command>` |
 | a terminal, in the repository | `~/.tokeneconomizer/bin/te <command>` |
 
 | Command | What it does |
 |---|---|
 | `status` | what it learned and did here, and what your sessions cost |
 | `microskills` | the facts it injects, and those still forming |
-| `toolprune` | the tools it left out, and the evidence (not on Pi, opencode, Hermes Agent, the Antigravity CLI or Factory Droid) |
+| `toolprune` | the tools it left out, and the evidence (not on Pi, opencode, Hermes Agent, the Antigravity CLI, Factory Droid or Muse Code) |
 | `toolprune restore` | give them back; they will not be removed again |
 | `config` | every setting in effect |
 | `config set microskills=on` | turn a mechanism on (or `=off`) in this repository; add `--global` for every repository |
@@ -380,6 +404,7 @@ are these settings:
 | *r* | `loopguard_nudges` | 1 | redirects per turn before the guard only tells you |
 | *b* | `loopguard.backstop_mult` | 2.5 | how many times its usual length a churning turn may run before it is redirected without the judge |
 | | `droid_sidecall` | off | on Droid, allow the plugin's own model calls, which run `droid exec` |
+| | `muse_sidecall` | off | on Muse Code, allow the plugin's own model calls, which run `muse exec` with no built-in tool |
 
 Change them with `config set`, shown here in Claude Code's form (other agents type it as in
 [Everyday commands](#everyday-commands)):
@@ -440,6 +465,7 @@ what it can leave out differs:
 | Hermes Agent | nothing yet | — |
 | Antigravity CLI | nothing yet | — |
 | Factory Droid | nothing (no persistent per-tool setting in the TUI) | — |
+| Muse Code | nothing (no per-repository tool setting) | — |
 
 Tool pruning adds only its own entries and never touches deny rules you wrote; a settings file it
 creates is kept out of git (`.git/info/exclude`). On Claude Code, the session-start line that says
@@ -476,6 +502,7 @@ Where that line appears, and how to stop the turn, in the terminal UI and in a h
 | opencode | as a notification | Esc | on stderr | Ctrl+C |
 | Hermes Agent | in the model's reply | Ctrl+C | in the final reply | Ctrl+C |
 | Factory Droid | in the model's reply | Interrupt the agent | in the final reply | Ctrl+C |
+| Muse Code | briefly in the status line, and in the model's reply | Interrupt the agent | in the final reply | Ctrl+C |
 
 - **Claude Code** shows a plugin's own lines only in its detailed transcript (Ctrl+O), so the
   plugin asks Claude to repeat this one in its reply; the model may word it differently or leave
@@ -499,9 +526,9 @@ agent's own limits; afterwards, `te status` counts the redirects and "still stuc
 | [`tokeneconomizer/loopguard`](tokeneconomizer/loopguard/) | Failure-loop intervention: the per-call guard and its per-repository envelope |
 | [`tokeneconomizer/trace`](tokeneconomizer/trace/) | Each agent's session log, read into one shape |
 | [`tokeneconomizer/plugin`](tokeneconomizer/plugin/) | The runtime the hooks and the `te` command run |
-| [`plugin`](plugin/) | The installable plugin: manifests, hook files, launchers, slash commands, the Pi extension, the opencode and Hermes plugins, the Droid bundle (`.factory-plugin/`) |
+| [`plugin`](plugin/) | The installable plugin: manifests, hook files, launchers, slash commands, the Pi extension, the opencode and Hermes plugins, the Droid bundle (`.factory-plugin/`), the Muse Code manifest (`.muse-plugin/`) and its hook wrappers (`muse/`) |
 | [`experiments`](experiments/) | The harness, launchers and task sets behind the paper's results |
-| [`docs`](docs/) | `PLUGIN.md` (design, verified agent behavior), `ARCHITECTURE.md` (how the package fits together) and `DROID.md` (the Factory Droid adapter) |
+| [`docs`](docs/) | `PLUGIN.md` (design, verified agent behavior), `ARCHITECTURE.md` (how the package fits together), `DROID.md` (the Factory Droid adapter) and `MUSE.md` (the Muse Code adapter) |
 | [`tests`](tests/) | Offline tests for the package and the plugin |
 
 The package is standard-library only. Run the tests with `python -m pytest tests` (add

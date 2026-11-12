@@ -585,6 +585,8 @@ def _config_view(cfg):
                     "history_dirs": d.pop("history_dirs")},
         "droid": {"state": "on" if cfg.droid_sidecall else "off",
                   "droid_sidecall": d.pop("droid_sidecall")},
+        "muse": {"state": "on" if cfg.muse_sidecall else "off",
+                 "muse_sidecall": d.pop("muse_sidecall")},
         "other": d,
         "warnings": cfg.warnings,
     }
@@ -625,7 +627,8 @@ def cmd_config(args):
     print(f"{path}: {json.dumps(cur, sort_keys=True)}")
     print("applies from the next hook call; a new fact-size cap applies once the next session "
           "has been folded")
-    if {canonical(k) for k in updates} & {"microskills", "loopguard", "droid_sidecall"} and sidecall.resume(
+    resumes = {"microskills", "loopguard", "droid_sidecall", "muse_sidecall"}
+    if {canonical(k) for k in updates} & resumes and sidecall.resume(
             ctx.host.name, ctx.root):
         print(f"the plugin's model calls through `{sidecall.call_name(ctx.host.name)}` will be "
               f"tried again")
@@ -816,12 +819,12 @@ def cmd_doctor(args):
     import shutil as _sh
     # Only the agents installed here: a Codex-only machine has no Claude Code catalog to probe.
     agents = [h for h in ("antigravity", "claude", "codex", "copilot", "droid", "grok", "hermes",
-                          "opencode", "pi")
+                          "muse", "opencode", "pi")
               if _sh.which(sidecall.claude_cli() if h == "claude" else
                            sidecall.hermes_cli() if h == "hermes" else
                            "agy" if h == "antigravity" else h)]
     print("agents      " + (', '.join(agents) or 'none of antigravity (agy), claude, codex, '
-                             'copilot, droid, grok, hermes, opencode, pi on PATH'))
+                             'copilot, droid, grok, hermes, muse, opencode, pi on PATH'))
     ctx = _ctx(args)          # the per-agent lines below read the settings in effect
     for h in agents:
         pause = sidecall.paused(h, root)
@@ -867,6 +870,12 @@ def cmd_doctor(args):
             side = ("off (set `droid_sidecall=on` or TE_DROID_SIDECALL=1 to try them)")
         print(f"droid       sessions {sessions}; side calls {side}; tool pruning is not "
               f"available in the TUI")
+    if "muse" in agents:
+        side = ("on (the `muse_sidecall` setting)" if sidecall.muse_enabled(ctx.config)
+                else "off (set `muse_sidecall=on` to try them)")
+        from ..trace import muse_data_dir
+        print(f"muse        sessions {os.path.join(muse_data_dir(), 'sessions')}; side calls "
+              f"{side}; tool pruning is not available")
     if "hermes" in agents:
         link = os.path.join(sidecall.hermes_home(), "plugins", "tokeneconomizer")
         print(f"hermes      plugin {'linked at ' + link if os.path.exists(link) else 'not in ' + link}"

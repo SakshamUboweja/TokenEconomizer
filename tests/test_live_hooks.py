@@ -317,7 +317,7 @@ def test_warm_guard_nudges_then_only_notifies_in_an_interactive_session(env, rep
 
 def _guard_turn(env, repo, sid, key, calls, host):
     """One prompt-turn on `host`, each call in that agent's own payload shape."""
-    idk = "turn_id" if host == "codex" else "prompt_id"
+    idk = "turn_id" if host in ("codex", "muse") else "prompt_id"
     base = {"session_id": sid, "transcript_path": "", "cwd": repo}
     if host != "copilot":
         base[idk] = key
@@ -337,6 +337,12 @@ def _stuck(host, n=40):
                  {"output": "ok", "exitCode": 0}) if k % 2 == 0 else
                 ("Execute", {"command": "pytest -q"}, {"output": fail, "exitCode": 1})
                 for k in range(n)]
+    if host == "muse":
+        # Muse's own tool names; a tool's result is a string for a text tool.
+        return [("edit_file", {"path": "/r/pkg/a.py", "old_string": "x", "new_string": "y"},
+                 "Edited `pkg/a.py`.") if k % 2 == 0 else
+                ("bash", {"command": "pytest -q"}, fail + "\nexit code: 1")
+                for k in range(n)]
     if host == "pi":
         return [("edit", {"path": "/r/pkg/a.py", "oldText": "x", "newText": "y"}, {"content": "ok"})
                 if k % 2 == 0 else ("bash", {"command": "pytest -q"},
@@ -350,7 +356,7 @@ def _stuck(host, n=40):
             for k in range(n)]
 
 
-@pytest.mark.parametrize("host", ["claude", "codex", "copilot", "pi", "droid"])
+@pytest.mark.parametrize("host", ["claude", "codex", "copilot", "pi", "droid", "muse"])
 @pytest.mark.parametrize("mode", ["interactive", "headless"])
 @pytest.mark.parametrize("setting", ["nudge", "stop"])
 def test_the_guard_redirects_then_tells_the_person_how_to_stop_on_every_agent(
@@ -359,9 +365,10 @@ def test_the_guard_redirects_then_tells_the_person_how_to_stop_on_every_agent(
     agent's way to stop the turn. The plugin never stops it -- `stop` is read as `nudge`."""
     env = dict(env, TE_MODE=mode, TE_LOOPGUARD=setting)
     green = [("Read", {"file_path": "/r/a.py"}, "ok")] * 8
+    sid = "0198f0aa-2222-7000-8000-0000000000bb" if host == "muse" else "s"   # Muse's are UUIDs
     for k in range(5):
-        _guard_turn(env, repo, "s", f"g{k}", green, host)
-    outs = _guard_turn(env, repo, "s", "stuck", _stuck(host), host)
+        _guard_turn(env, repo, sid, f"g{k}", green, host)
+    outs = _guard_turn(env, repo, sid, "stuck", _stuck(host), host)
     ctx_key = (lambda o: o.get("additionalContext")) if host == "copilot" else (
         lambda o: (o.get("hookSpecificOutput") or {}).get("additionalContext"))
     shown = (lambda o: " ".join(o.get("progress") or [])) if host == "copilot" else (
@@ -380,9 +387,10 @@ def test_the_guard_redirects_then_tells_the_person_how_to_stop_on_every_agent(
     assert len(stuck) == 1                                             # one notice
     hint = hosts.HOSTS[host]().stop_hint(mode == "headless")
     assert stuck[0].endswith(hint)
-    if host == "claude":
-        # Claude Code keeps hook messages out of the main view, so the notice also goes to the
-        # model, word for word, to pass on in its reply; the redirect comes first.
+    if host in ("claude", "muse"):
+        # Claude Code keeps hook messages out of the main view, and Muse shows one only for
+        # five seconds, so the notice also goes to the model, word for word, to pass on in its
+        # reply; the redirect comes first.
         redirect, relay = to_model
         assert "Process check (automated)" in redirect
         assert stuck[0] in relay and "it does not change your task" in relay

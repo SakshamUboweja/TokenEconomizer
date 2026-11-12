@@ -50,6 +50,11 @@ so no extra API key is needed and the call is billed where the session is:
     `TE_DROID_SIDECALL=1`): Droid writes a session log of its own for the call, and cannot be
     left with no tool at all. Its usage is read from the call's result or from the settings file
     beside that log.
+  * Muse Code: `muse exec --json --no-session-log --preset empty --max-model-steps 1
+    --prompt-file <file>` in a throwaway directory, on the person's default model, with no
+    built-in tool (`MUSE_FLAGS`). OFF unless `muse_sidecall` is on. Muse clears its hooks'
+    environment, so a marker file in that directory, not `TE_SIDECALL`, keeps the plugin's own
+    hooks out of the nested session.
 
 Every side call but Hermes's runs with `TE_SIDECALL=1`, which the plugin's hook entry point treats as "do
 nothing": without it the nested agent would run this plugin's hooks and recurse. A call that
@@ -862,9 +867,65 @@ def droid_call(prompt, model="", cli="droid", timeout=TIMEOUT_S):
     return text, eff
 
 
+def muse_enabled(config=None):
+    """Whether the `muse_sidecall` setting allows Muse Code side calls. There is no variable for
+    it: Muse clears its hooks' environment. They are OFF by default, as Droid's are: the flags
+    that leave `muse exec` with no tool are in Muse's changelog, not its manual."""
+    return bool(getattr(config, "muse_sidecall", False))
+
+
+# A Muse side call only answers, and its prompt quotes what the session ran, so it must not be
+# able to act. `--preset empty` (changelog 1.4.8) starts the run with no built-in tool;
+# `--disable-request-user-input` (1.4.9) and `--disable-reminders` (1.4.3) keep it to one
+# answer; `--no-session-log` writes no session; `--max-model-steps 1` allows one model call, so
+# a tool call could not be answered. Never `--yolo`, `--trust-workspace` or
+# `--disable-approval`: the call runs sandboxed, with approvals on, in an untrusted directory.
+MUSE_FLAGS = ("exec", "--json", "--no-session-log", "--preset", "empty", "--disable-reminders",
+              "--disable-request-user-input", "--max-model-steps", "1")
+# Where a build refuses `--preset` (exit 2, a usage error): the tools that write or run.
+MUSE_FALLBACK_FLAGS = ("exec", "--json", "--no-session-log", "--disable-write",
+                       "--disable-shell", "--max-model-steps", "1")
+
+
+def muse_call(prompt, model="", cli="muse", timeout=TIMEOUT_S):
+    """A text-only completion through `muse exec --json` (`MUSE_FLAGS`), in a throwaway
+    directory, on the person's default model unless `model` names one.
+
+    The prompt goes in a file (`--prompt-file`), not on the command line, where other users'
+    `ps` would show it. Muse runs a plugin's hooks in `exec` sessions too, and clears their
+    environment, so `TE_SIDECALL` cannot reach them: the directory holds a `.te-sidecall`
+    marker instead, and `hosts.Muse.prepare` leaves a session started there alone. Usage is
+    read from the run's `run.usage` line where it prints one."""
+    from .hosts import Muse
+    with tempfile.TemporaryDirectory(prefix="te-side-", ignore_cleanup_errors=True) as cwd:
+        with open(os.path.join(cwd, Muse.SIDECALL_MARK), "w", encoding="utf-8") as fh:
+            fh.write("TokenEconomizer side call\n")
+        prompt_file = os.path.join(cwd, "prompt.txt")
+        with open(prompt_file, "w", encoding="utf-8") as fh:
+            fh.write(prompt)
+        out = None
+        for flags in (MUSE_FLAGS, MUSE_FALLBACK_FLAGS):
+            cmd = [*program(cli), *flags]
+            if model:
+                cmd += ["--model", model]
+            cmd += ["--prompt-file", prompt_file]
+            out = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
+                                 timeout=timeout, env=_env(), cwd=cwd, stdin=subprocess.DEVNULL)
+            if out.returncode != 2:
+                break
+    text, usage = trace.muse_exec_reply(out.stdout)
+    if not text:
+        _no_reply("muse", out)
+    eff = None
+    if usage:
+        usage["model"] = usage.get("model") or model or None
+        eff, _ = accounting.effective(usage)
+    return text, eff
+
+
 # The command each agent's side calls run, as the notices name it; the rest run `<agent> -p`.
-_CALLS = {"codex": "codex exec", "droid": "droid exec", "opencode": "opencode run",
-          "cursor": "cursor-agent -p", "hermes": "hermes chat"}
+_CALLS = {"codex": "codex exec", "droid": "droid exec", "muse": "muse exec",
+          "opencode": "opencode run", "cursor": "cursor-agent -p", "hermes": "hermes chat"}
 
 
 def call_name(host_name):
@@ -912,4 +973,9 @@ def _host_call(host_name, config):
         if not (droid_enabled() or getattr(config, "droid_sidecall", False)):
             return None
         return lambda prompt, _m="agent": droid_call(prompt, model=model)
+    if host_name == "muse":
+        # Off unless the `muse_sidecall` setting turns it on (`muse_enabled`).
+        if not muse_enabled(config):
+            return None
+        return lambda prompt, _m="agent": muse_call(prompt, model=model)
     return lambda prompt, _m="agent": claude_call(prompt, model=model or "haiku", **kw)

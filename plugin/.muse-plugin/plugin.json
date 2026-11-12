@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "name": "tokeneconomizer",
+  "displayName": "TokenEconomizer",
+  "version": "0.1.0",
+  "description": "Learns short facts about a repository from its finished Muse Code sessions and adds them to later sessions at start, and watches each turn for a tool call that keeps failing. Tool pruning is not available on Muse Code.",
+  "compat": {
+    "source": "native",
+    "manifestDir": ".muse-plugin"
+  },
+  "capabilities": {
+    "skills": [],
+    "commands": [],
+    "mcpServers": [],
+    "reminders": [],
+    "hooks": [
+      {
+        "id": "session-start",
+        "event": "SessionStart",
+        "command": [
+          "sh",
+          "muse/hooks/session-start.sh"
+        ],
+        "timeoutMs": 15000
+      },
+      {
+        "id": "prompt",
+        "event": "UserPromptSubmit",
+        "command": [
+          "sh",
+          "muse/hooks/prompt.sh"
+        ],
+        "timeoutMs": 20000
+      },
+      {
+        "id": "post-tool",
+        "event": "PostToolUse",
+        "command": [
+          "sh",
+          "muse/hooks/post-tool.sh"
+        ],
+        "timeoutMs": 60000
+      },
+      {
+        "id": "post-tool-failure",
+        "event": "PostToolUseFailure",
+        "command": [
+          "sh",
+          "muse/hooks/post-tool-failure.sh"
+        ],
+        "timeoutMs": 60000
+      },
+      {
+        "id": "stop",
+        "event": "Stop",
+        "command": [
+          "sh",
+          "muse/hooks/stop.sh"
+        ],
+        "timeoutMs": 10000
+      },
+      {
+        "id": "session-end",
+        "event": "SessionEnd",
+        "command": [
+          "sh",
+          "muse/hooks/session-end.sh"
+        ],
+        "timeoutMs": 300000,
+        "async": true
+      }
+    ]
+  }
+}

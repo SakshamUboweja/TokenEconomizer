@@ -44,8 +44,10 @@ def test_manifests_agree_on_identity():
     # Copilot reads `.github/plugin/plugin.json` in preference to `.claude-plugin/` (verified on
     # 1.0.83: only the hooks it names ran), which is how it gets a hook file of its own.
     copilot = _json(PLUGIN, ".github", "plugin", "plugin.json")
-    assert claude["name"] == codex["name"] == copilot["name"] == "tokeneconomizer"
-    assert claude["version"] == codex["version"] == copilot["version"]
+    # Muse Code reads `.muse-plugin/` in preference to the others (its manifest reference).
+    muse = _json(PLUGIN, ".muse-plugin", "plugin.json")
+    assert claude["name"] == codex["name"] == copilot["name"] == muse["name"] == "tokeneconomizer"
+    assert claude["version"] == codex["version"] == copilot["version"] == muse["version"]
     assert codex["hooks"] == "./hooks/codex-hooks.json"
     assert copilot["hooks"] == "hooks/copilot-hooks.json"
     for m in (codex, copilot):
@@ -225,6 +227,8 @@ def test_the_bundle_runs_without_a_checkout(tmp_path):
     assert (bundle / "hermes" / "plugin.yaml").exists()
     assert (bundle / "hooks.json").exists()                        # Antigravity's, at the root
     assert (bundle / ".antigravity-plugin" / "plugin.json").exists()
+    assert (bundle / ".muse-plugin" / "plugin.json").exists()      # the bundle is Muse's too
+    assert (bundle / "muse" / "hooks" / "session-start.sh").exists()
     assert (bundle / "lib" / "tokeneconomizer" / "__init__.py").exists()
     assert not (bundle / "lib" / "te_harness").exists()
     assert not (bundle / "lib" / "te_bench").exists()
