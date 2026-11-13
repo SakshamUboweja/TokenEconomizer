@@ -11,8 +11,7 @@
     PostToolUse       fold the call into the turn's guard; a redirect when it first says the
                       turn is stuck, then a notice to the person saying how to stop it
     Stop              close the turn; an ended-green turn feeds the repository's envelope
-    SessionEnd        hand the session to a detached `te fold` (on Muse Code, which stops what
-                      a hook leaves running, fold it in the hook: `Host.stops_background`)
+    SessionEnd        hand the session to a detached `te fold`
 
 Every handler returns quickly and fails open. A hook that raises would break the user's session
 for a cost optimization, so `hook.main` turns any exception into an empty output, and nothing
@@ -336,9 +335,6 @@ class LiveController:
         if self.host.name in sidecall.NO_SIDE_CALLS or sidecall.paused(self.host.name,
                                                                          self.ctx.root):
             return NoVerdict()
-        if self.host.stops_background:
-            # The judge is a detached job, which this agent stops when the hook returns.
-            return NoVerdict()
         return AsyncJudge(self.ctx, self.sid, thr.get("judge_confidence"))
 
     def post_tool(self):
@@ -426,11 +422,5 @@ class LiveController:
         s["ended"] = time.time()
         s["end_reason"] = self.p.get("reason")
         self._save(s)
-        if self.host.stops_background:
-            # The agent stops a hook's background processes once it returns (Muse Code), so
-            # the session is folded here, with any earlier one a cut-short fold left pending.
-            fold.spawn_fold(self.ctx, [self.sid] + fold.pending_sessions(
-                self.ctx, exclude=(self.sid,)), inline=True)
-        else:
-            fold.spawn_fold(self.ctx, [self.sid])
+        fold.spawn_fold(self.ctx, [self.sid])
         return {}

@@ -13,7 +13,10 @@ built here. Where each shape comes from:
     session published by a third-party reader, field names copied exactly;
   * `retained_frame` / `retained_marker` lines and the `subagent/` layout -- third-party readers;
   * SessionStart and UserPromptSubmit payloads -- verbatim from Meta's hooks guide; the tool
-    events' keys from its hook-events reference, with made-up values.
+    events' keys from its hook-events reference, with made-up values;
+  * a shell call's JSON result (in the log, in `tool_response`, and in a PostToolUseFailure's
+    `error`) and `muse exec --json`'s envelope lines (`run_terminal`, `run_usage`) -- field
+    names copied from a live Muse 1.4.18 run, values made up.
 """
 import io
 import json
@@ -258,45 +261,6 @@ def test_model_written_arguments_cannot_break_the_reader(tmp_path):
     trace.muse_prompt_turns(path)
 
 
-def test_a_session_whose_fold_raises_does_not_stop_the_others(tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    ctx = LiveContext.build(hosts.Muse(), str(repo), _env(tmp_path / "state", tmp_path / "d"))
-    done = []
-
-    def fake_fold(ctx_, sid, lock_wait=None):
-        assert lock_wait == fold.INLINE_LOCK_WAIT_S
-        if sid == "bad":
-            raise RecursionError("poisoned")
-        done.append(sid)
-        return sid
-
-    monkeypatch.setattr(fold, "fold_session", fake_fold)
-    assert fold._fold_in_hook(ctx, ["a", "bad", "b"]) == ["a", None, "b"]
-    assert done == ["a", "b"]
-    assert "poisoned" in open(os.path.join(ctx.root, "errors.log"), encoding="utf-8").read()
-    # Past its budget, the rest stay pending for a later session's end.
-    done.clear()
-    assert fold._fold_in_hook(ctx, ["a", "b"], budget_s=0) == [] and done == []
-
-
-def test_nothing_is_left_running_in_the_background_on_muse(tmp_path, monkeypatch):
-    """Muse stops what a hook leaves behind: no history import starts from a hook, and the
-    loop guard asks no judge (its rule backstop still applies)."""
-    from tokeneconomizer.plugin.controller import LiveController
-    from tokeneconomizer.plugin.judge import NoVerdict
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    env = _env(tmp_path / "state", tmp_path / "d")
-    env.pop("TE_FOLD_SYNC")
-    ctx = LiveContext.build(hosts.Muse(), str(repo), dict(env, TE_HISTORY_IMPORT="on"))
-    assert history.maybe_start(ctx) is None
-    assert not os.path.exists(ctx.store.path(history.STATE))
-    monkeypatch.setattr(sidecall, "paused", lambda *a: False)
-    ctl = LiveController(ctx, {"session_id": SID})
-    assert isinstance(ctl._judge(None, {"p90": 1}), NoVerdict)
-
-
 def test_the_data_directory_and_the_log_are_found(tmp_path):
     assert trace.muse_data_dir({"TE_MUSE_DATA_DIR": "/a"}) == "/a"
     assert trace.muse_data_dir({"MUSE_PLUGIN_DATA_DIR": "/h/m/plugins/data/tokeneconomizer"}) \
@@ -342,6 +306,55 @@ def test_tool_events_in_the_guard_s_terms():
     assert (name, code) == ("bash", 2) and "boom" in text
     assert host.turn_key({"turn_id": "t"}) == "t" and host.turn_key({}) == ""
     assert denylist.supports("muse") is False
+
+
+def _shell(code, output, status=None, chunk="exec-1-1"):
+    """A shell call's result as Muse 1.4.18 writes it (log, `tool_response`, `error`)."""
+    return json.dumps({"chunk_id": chunk, "command": "x", "description": "d", "exit_code": code,
+                       "terminal_status": status or ("completed" if code == 0 else "failed"),
+                       "terminal_reason": None, "output": output, "original_output_bytes": 1,
+                       "original_output_tokens": 1, "truncated": False}, indent=2)
+
+
+def test_a_shell_result_is_read_for_its_output_and_exit_code():
+    assert trace.muse_shell_result(_shell(0, "a.py\n")) == ("a.py\n", 0)
+    assert trace.muse_shell_result(_shell(3, "")) == ("", 3)
+    assert trace.muse_shell_result(_shell(None, "slow", status="timed_out")) == ("slow", 1)
+    for text in ("a.py", "{", '{"output": 1}', "[1]", None, "tool failed: boom"):
+        assert trace.muse_shell_result(text) is None
+
+
+def test_a_failing_shell_call_reaches_the_guard_with_its_exit_code():
+    """Muse 1.4.18 sends a shell call that exits non-zero as PostToolUseFailure, the result
+    JSON in `error`; the guard gets the exit code and the output, and two runs of the same
+    failing command read the same though Muse numbers each call's `chunk_id`."""
+    host = hosts.Muse()
+    base = {"hook_event_name": "PostToolUseFailure", "tool_name": "bash",
+            "tool_input": {"command": "cat x", "description": "d", "workdir": "/r"},
+            "is_interrupt": False, "duration_ms": 5}
+    one = host.tool_call(dict(base, error=_shell(1, "cat: x: No such file\n")))
+    two = host.tool_call(dict(base, error=_shell(1, "cat: x: No such file\n", chunk="exec-2-1")))
+    assert one == two == ("bash", {"command": "cat x"}, "cat: x: No such file\n", 1)
+    ok = host.tool_call({"hook_event_name": "PostToolUse", "tool_name": "bash",
+                         "tool_input": {"command": "ls"}, "tool_response": _shell(0, "a.py\n")})
+    assert ok[2:] == ("a.py\n", 0)
+
+
+def test_the_log_s_shell_results_read_as_claude_code_s(tmp_path):
+    log = _Log().head(str(tmp_path)).prompt("go")
+    log.run({"kind": "assistant_tool_calls_committed", "message_id": "m", "tool_calls": [
+        {"args": json.dumps({"command": "cat x"}), "call_id": "c1", "id": "fc1", "name": "bash"},
+        {"args": json.dumps({"command": "ls"}), "call_id": "c2", "id": "fc2", "name": "bash"}]})
+    log.run({"kind": "tool_result_batch_committed", "batch_id": "m", "results": [
+        {"text": _shell(1, "cat: x: missing\n"), "tool_call_id": "c1", "tool_call_index": 0},
+        {"text": _shell(0, "a.py\n"), "tool_call_id": "c2", "tool_call_index": 1}]})
+    path = log.answer().end().write(tmp_path / "d")
+    out = tmp_path / "out.jsonl"
+    assert trace.muse_session_to_claude(path, str(out)) == 2
+    results = [b for ln in out.read_text().splitlines()
+               for b in json.loads(ln)["message"]["content"] if b.get("type") == "tool_result"]
+    assert [(r["content"], r["is_error"]) for r in results] == [
+        ("Exit code 1\ncat: x: missing\n", True), ("a.py\n", False)]
 
 
 def test_prepare_drops_child_threads_side_calls_and_bad_ids(tmp_path):
@@ -563,7 +576,24 @@ def test_a_build_that_refuses_a_flag_gets_no_weaker_retry(monkeypatch):
     assert os.listdir(os.path.join(paths.state_root(), "muse-sidecalls")) == []
 
 
-def test_exec_replies_in_either_line_form():
+@pytest.mark.real_sidecalls
+def test_a_muse_with_no_stored_login_pauses_the_side_calls(monkeypatch):
+    """A hook's environment has no META_API_KEY, so a Muse with no stored login answers every
+    side call with the same error (1.4.18): the first one pauses them."""
+    monkeypatch.setattr(sidecall, "program", lambda cli: [cli])
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=(
+            "muse: local session messaging disabled: session logging is required\n"
+            "missing meta credentials: run `muse login` or set META_API_KEY, or save "
+            "credentials at /home/u/.config/muse/auth.json\n"))
+
+    monkeypatch.setattr(sidecall.subprocess, "run", fake_run)
+    assert sidecall.muse_call("p") == ("", None)
+    assert sidecall.paused("muse")
+
+
+def test_exec_replies_in_every_line_form():
     assert trace.muse_exec_reply("") == ("", None)
     assert trace.muse_exec_reply("garbage\n{\n") == ("", None)
     text, usage = trace.muse_exec_reply(json.dumps(
@@ -574,6 +604,22 @@ def test_exec_replies_in_either_line_form():
         {"kind": "run.usage", "models": {"a": {"input_tokens": 10, "output_tokens": 2},
                                          "b": {"inputTokens": 5, "outputTokens": 1}}})))
     assert text == "fallback" and usage["input_tokens"] == 15 and usage["output_tokens"] == 3
+    # Muse 1.4.18 prints record envelopes, the content in `payload`.
+    env = {"schema_version": 1, "stream": {"kind": "session", "id": SID}, "sequence": 1,
+           "record_type": "event", "durability": "durable", "payload_schema_version": 1}
+    text, usage = trace.muse_exec_reply("\n".join(json.dumps(x) for x in (
+        dict(env, payload_type="run.output.delta",
+             payload={"kind": "run_output_delta", "text": "po"}),
+        dict(env, record_type="status", payload_type="run.usage", payload={
+            "kind": "run_usage", "calls": 1, "children_included": False, "models": [
+                {"cached_tokens": 40, "calls": 1, "input_tokens": 100,
+                 "model": "muse-spark-1.3", "output_tokens": 7, "reasoning_tokens": 3}]}),
+        dict(env, payload_type="run.terminal.completed", payload={
+            "kind": "run_terminal", "reason": None, "terminal": "completed", "text": "pong"}))))
+    assert text == "pong"
+    assert usage == {"input_tokens": 60, "cache_read_input_tokens": 40,
+                     "cache_creation_input_tokens": 0, "output_tokens": 7,
+                     "model": "muse-spark-1.3"}
 
 
 # ---- history import and the end to end ------------------------------------------------------
@@ -620,15 +666,16 @@ def test_history_import_learns_facts_and_prices_the_sessions(tmp_path):
     assert "`python runtests.py" in out["hookSpecificOutput"]["additionalContext"]
 
 
-def test_a_live_session_is_folded_inside_its_session_end_hook(tmp_path):
-    """Muse stops what a hook leaves running, so the fold happens in the (asynchronous)
-    SessionEnd hook -- with no TE_FOLD_SYNC -- and picks up an earlier session left pending."""
+def test_a_session_is_folded_at_its_end_and_a_missed_end_at_the_next_start(tmp_path):
+    """The normal path (`TE_FOLD_SYNC` runs the detached fold in place): a session's end folds
+    it, and one that never sent its SessionEnd is folded at the next session's start."""
     state, data = tmp_path / "state", tmp_path / "data"
     repo = tmp_path / "repo"
     repo.mkdir()
     env = _env(state, data)
-    env.pop("TE_FOLD_SYNC")
-    for sid in (_sid(1), _sid(2)):
+    ctx = _ctx(env, repo)
+
+    def run(sid):
         _session(str(repo), sid=sid).write(data, age_s=0)
         base = {"session_id": sid, "cwd": str(repo), "transcript_path": None}
         _call(env, dict(base, hook_event_name="SessionStart", source="startup"))
@@ -637,12 +684,15 @@ def test_a_live_session_is_folded_inside_its_session_end_hook(tmp_path):
                         tool_input={"command": "ls"}, tool_response="a.py",
                         cwd=str(tmp_path)))
         _call(env, dict(base, hook_event_name="Stop", turn_id="t1", stop_hook_active=False))
-    ctx = _ctx(dict(env, TE_FOLD_SYNC="1"), repo)
+
+    run(_sid(1))
     s1 = ctx.store.read(os.path.join("sessions", f"{_sid(1)}.json"))
-    s1["ended"] = time.time()                         # ended, but its fold never ran
+    s1["ended"] = time.time()                         # ended, but no SessionEnd came
     ctx.store.write(os.path.join("sessions", f"{_sid(1)}.json"), s1)
+    run(_sid(2))
+    assert set(ctx.store.read("folded.json") or {}) == {_sid(1)}
     assert _call(env, {"hook_event_name": "SessionEnd", "session_id": _sid(2),
-                       "cwd": str(repo), "reason": "exit"}) == {}
+                       "cwd": str(repo), "reason": "other"}) == {}
     assert set(ctx.store.read("folded.json") or {}) == {_sid(1), _sid(2)}
 
 

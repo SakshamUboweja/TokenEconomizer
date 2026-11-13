@@ -743,19 +743,22 @@ was not.)
   proxy reach them. A hook whose thread differs from its session (a child or side thread) is
   left alone.
 * **The session log** is `<data dir>/sessions/<YYYY>/<MM>/<DD>/<id>/session.jsonl`, an
-  append-only event log; Meta calls the layout an implementation detail. `transcript_path` may be
-  null (it is in Meta's own example payloads), so the adapter finds the log by session id.
-  Usage is summed from `model_completed` events, cached input taken out of `input_tokens`.
+  append-only event log; Meta calls the layout an implementation detail. `transcript_path` is
+  null in every hook (1.4.18), so the adapter finds the log by session id. Usage is summed from
+  `model_completed` events, cached input taken out of `input_tokens`.
+* **A shell call's result** is a JSON object (`exit_code`, `terminal_status`, `output`, a
+  per-call `chunk_id`), in the log and in the hook: in `tool_response` for exit 0, in a
+  `PostToolUseFailure`'s `error` otherwise (`trace.muse_shell_result`). Other tools' failures
+  are text that starts `tool failed: `.
+* **Muse's reminder agents** run plugin hooks under their own `session_id`; their
+  `MUSE_THREAD_ID` differs from `MUSE_SESSION_ID`, so they are left alone.
 * **Tool events report the tool's own directory as `cwd`;** the adapter keeps the session's
   directory from its first hook, so a call run elsewhere stays with this repository.
-* **Background work.** Muse stops the processes a plugin hook leaves running once it returns
-  (changelog 1.4.8). So the session is folded inside its `SessionEnd` hook, within a time budget,
-  along with any session whose earlier fold was cut short (`Host.stops_background`); the loop
-  guard asks no judge (a detached job), and the history import is not started from a hook. The
-  manifest marks `SessionEnd` asynchronous, which is unverified: Muse documents asynchronous
-  hooks as running in the background, not that it waits for one at exit. The detached jobs a
-  session start still launches (a pending fold, the repository map's refresh) may be stopped; a
-  stopped fold is picked up at a later session's end.
+* **Background work.** Muse gives the hooks it runs at exit about half a second and does not
+  wait for an asynchronous one, so a fold inside `SessionEnd` is cut short. The detached
+  `te fold` the hook starts (`start_new_session`) outlives the hook and `muse`, in `muse exec`
+  and in the terminal UI (1.4.18), so the session is folded as on the other agents, and the
+  judge, the history import and the map's refresh run detached too.
 * **Tool pruning** is not available: Muse documents no per-repository setting that removes a
   built-in tool; its tool switches (`--disable-*`, `--preset`) are launch flags, and its MCP
   `disabled_tools` is recorded but not acted on (1.3.0).
@@ -765,6 +768,9 @@ was not.)
   while the call runs; `Muse.prepare` honours it because `TE_SIDECALL` cannot reach Muse's
   hooks. The flags that leave the run with no tool are in the changelog only, and
   `--preset empty` keeps configured MCP tools; a build that refuses a flag gets no weaker retry.
+  The answer is the `run_terminal` record's `payload.text`, the usage its `run_usage` record.
+  A hook has no `META_API_KEY`, so without `muse login` the call answers "missing meta
+  credentials", which pauses the side calls.
 * **Notices.** A `systemMessage` from a hook that completes while no turn runs shows nothing, so
   the session-start notices (facts added, side calls paused) are not seen on Muse.
 * **Offline, tested here:** `tests/test_muse.py` and the guard test in `tests/test_live_hooks.py`.
@@ -910,12 +916,10 @@ open-vocabulary. On a repository you do not trust, leave micro-skills off (the d
 * **Factory Droid (experimental)** — micro-skills, the loop guard and session cost, on 0.233.0
   (macOS). No tool pruning: the TUI has no persistent per-tool setting (Factory issue #65). Side
   calls are off until `droid_sidecall` is on; see `docs/DROID.md`.
-* **Muse Code (experimental)** — micro-skills, the loop guard's rule backstop and session cost,
-  built from Meta's documentation and not yet run against a real `muse`. No tool pruning, no
-  loop-guard judge, and no history import started from a hook (Muse stops a hook's background
-  processes; the session's fold runs inside its `SessionEnd` hook). Hooks see a cleared
-  environment, so settings come from the config file. Side calls are off until `muse_sidecall`
-  is on. macOS and Linux only (the hook wrappers are POSIX shell); see `docs/MUSE.md`.
+* **Muse Code (experimental)** — micro-skills, the loop guard and session cost, built from
+  Meta's documentation and checked against a live 1.4.18 (Linux). No tool pruning. Hooks see a
+  cleared environment, so settings come from the config file. Side calls are off until
+  `muse_sidecall` is on, and need credentials stored by `muse login`. macOS and Linux only (the hook wrappers are POSIX shell); see `docs/MUSE.md`.
 * **Known gaps:**
   * `codex exec` prints no hook messages, so a headless Codex run shows no notice; `te status`
     counts it afterwards. On Claude Code the notice reaches the conversation and `claude -p`'s

@@ -1,12 +1,11 @@
 # TokenEconomizer on Muse Code (Meta)
 
-Muse Code is Meta's terminal coding agent (the `muse` CLI). Support for it is experimental, and
-**it has not been run against a real `muse` binary yet**. The adapter follows Meta's published
-documentation: the Muse Code manual and changelog (up to 1.4.14), and the developer guides for
-the Muse Code SDK (`@muse-code/sdk` 1.4.15), whose plugin reference was checked against 1.3.0.
-Its tests use synthetic sessions and hook payloads built from those documents (see
-`tests/test_muse.py` for where each shape comes from). Section [Verification](#verification)
-lists what still needs a live run.
+Muse Code is Meta's terminal coding agent (the `muse` CLI). Support for it is experimental. The
+adapter follows Meta's published documentation (the Muse Code manual and changelog up to 1.4.14,
+and the developer guides for the Muse Code SDK, `@muse-code/sdk` 1.4.15) and was checked against
+a live Muse Code 1.4.18 on Linux: section [Verification](#verification) says what that run
+showed. Its tests use synthetic sessions and hook payloads (see `tests/test_muse.py` for where
+each shape comes from).
 
 ## What works, and what does not
 
@@ -15,8 +14,8 @@ lists what still needs a live run.
 | Micro-skills (repository facts at session start) | yes | `SessionStart` accepts `hookSpecificOutput.additionalContext` |
 | History import (learn from earlier sessions) | yes | `<data dir>/sessions/<YYYY>/<MM>/<DD>/<id>/session.jsonl` records the tool calls |
 | Session cost / effective tokens | yes, priced as `fallback` | each model call's `model_completed` event carries its usage; Muse's models are not in the price table |
-| Loop guard (redirect a failing loop) | rule backstop only | `PostToolUse` and `PostToolUseFailure` accept `additionalContext`; the model judge is a detached job, which Muse would stop, so it is not asked here |
-| Repository map (`repomap=on`) | unverified | `UserPromptSubmit` accepts `additionalContext`, but the map is built by a detached refresh Muse may stop; `te --host muse repomap refresh` in a terminal builds it |
+| Loop guard (redirect a failing loop) | yes; the model judge only with `muse_sidecall=on` | `PostToolUse` and `PostToolUseFailure` accept `additionalContext`; a failing shell call arrives as `PostToolUseFailure` with its exit code |
+| Repository map (`repomap=on`) | yes | `UserPromptSubmit` accepts `additionalContext`; the map is built by a detached refresh, as elsewhere |
 | Tool pruning | no | Muse documents no per-repository setting that removes a built-in tool from the model's list; `--disable-*` and `--preset` are launch flags |
 
 ## Install
@@ -66,23 +65,26 @@ Check it in the repository:
   The adapter keeps the session's directory from its first hook, in
   `~/.tokeneconomizer/muse-sessions/<session id>.json` (removed at the session's end), so a
   call run in another directory is still counted for this repository.
-- **The session log.** A hook's `transcript_path` may be null, so the log is found under Muse's
-  data directory: the one the plugin's `MUSE_PLUGIN_DATA_DIR` sits in, else
-  `$XDG_DATA_HOME/muse`, else `~/.local/share/muse`.
-- **Folding.** Muse stops the processes a plugin hook leaves running once the hook returns
-  (changelog 1.4.8). So the plugin does not leave a detached `te fold` behind at the end: the
-  `SessionEnd` hook folds the session inside the hook, with any earlier session whose fold was
-  cut short, within a time budget. The manifest marks that hook asynchronous (observe-only,
-  five-minute timeout); Muse documents asynchronous hooks as running in the background, not
-  that it waits for one at exit, so this is unverified. A fold cut short stays pending and is
-  done at a later session's end.
-- **Other background work.** For the same reason the loop guard asks no model judge on Muse
-  (it redirects only at its rule backstop), and the history import is never started from a hook
-  even with `history_import=on`: run `te --host muse history import` from a terminal. The fold
-  of a session that ended without its `SessionEnd` and the repository map's refresh are still
-  started in the background at a session's start, and may be stopped.
-- **Subagents and side threads.** A hook whose `MUSE_THREAD_ID` differs from `MUSE_SESSION_ID`
-  belongs to a child or side thread and is left alone.
+- **The session log.** A hook's `transcript_path` is null (always, on 1.4.18), so the log is
+  found by session id under Muse's data directory: the one the plugin's `MUSE_PLUGIN_DATA_DIR`
+  sits in, else `$XDG_DATA_HOME/muse`, else `~/.local/share/muse`.
+- **Shell results.** A shell call's result is a JSON object (`exit_code`, `terminal_status`,
+  `output`, and a `chunk_id` that differs on every call). A call that exits 0 comes as
+  `PostToolUse` with it in `tool_response`; any other exit comes as `PostToolUseFailure` with it
+  in `error`. The adapter gives the loop guard the output and the exit code, and writes the log's
+  shell results the way Claude Code does (`Exit code N` first when the call failed). Other
+  tools' failures are text that starts `tool failed: `.
+- **Folding.** At `SessionEnd` the plugin starts a detached `te fold`, as on the other agents.
+  Muse does not wait for hooks at exit (it gives them about half a second, whether or not they
+  are asynchronous), but a detached fold, in a process session of its own, outlives both the
+  hook and `muse`; this held in `muse exec` and in the terminal UI on 1.4.18. A session that
+  ended without its fold is folded at the next session's start.
+- **Muse's own agents.** Muse's reminder agents run plugin hooks too (their `PostToolUse` for
+  `submit_reminder_decision`), under a `session_id` of their own, with `MUSE_THREAD_ID` set to it
+  and `MUSE_SESSION_ID` to the top-level session's. A hook whose `MUSE_THREAD_ID` differs from
+  `MUSE_SESSION_ID` belongs to such an agent, a child or a side thread, and is left alone.
+- **Resumed sessions.** `muse resume` sends `SessionStart` with `source: "resume"` and the same
+  session id, and the model still has what the first start added, so nothing is injected twice.
 
 ## Settings, and the cleared environment
 
@@ -124,34 +126,53 @@ the run with no built-in tool, and the call never passes `--yolo`, `--trust-work
 any of these flags, the call answers nothing (errors.log says why); there is no weaker retry.
 The flags that leave the run with no tool (`--preset`, `--disable-reminders`,
 `--disable-request-user-input`) are documented only in Muse's changelog, and `--preset empty`
-keeps the tools of MCP servers you configured: these are why the calls start off. Since the
-loop guard asks no judge on Muse, the setting matters only to micro-skills' proposer
-(`microskills=on`).
+keeps the tools of MCP servers you configured: these are why the calls start off. The run prints
+its answer as a `run_terminal` record and its usage as `run_usage` (1.4.18).
 
 Muse's hooks receive no proxy settings and no provider key, so a call made from a hook uses the
-key or browser session Muse has stored. Behind an HTTP proxy, side calls fail; with them off,
+credentials Muse has stored (`muse login`, or `~/.config/muse/auth.json`). A `META_API_KEY` in
+your shell does not reach it: without stored credentials Muse answers "missing meta
+credentials", and the plugin pauses its side calls until you run `te --host muse config set
+microskills=on` (or `loopguard=on`) again. Behind an HTTP proxy, side calls fail; with them off,
 `microskills=envfacts` still learns and the loop guard keeps its rule-based backstop.
 
 ## Verification
 
 Checked offline (`tests/test_muse.py`, and Muse in `tests/test_live_hooks.py`'s guard test):
-the log reader against Meta's record shapes and a third-party 0.2.1 capture; prompt counting;
-usage; finding the log; the host's payload handling, closed-schema answers and size cap; the
-side-call guard; detection; the history import and a learned fact in the next `SessionStart`
-answer; folding inside `SessionEnd`; the manifest against Muse's documented rules; and every
-wrapper through a built bundle.
+the log reader against Meta's record shapes, a third-party 0.2.1 capture and the 1.4.18 shapes
+below; prompt counting; usage; finding the log; the host's payload handling, closed-schema
+answers and size cap; the side-call guard; detection; the history import and a learned fact in
+the next `SessionStart` answer; folding at the session's end and at the next start; the manifest
+against Muse's documented rules; and every wrapper through a built bundle.
 
-Not yet checked on a real `muse`, and what to look at when it is:
+Checked live on Muse Code 1.4.18 (Linux, `muse-spark-1.3` models), with hooks that also saved
+their payloads:
 
-1. `muse plugins validate dist/marketplace/tokeneconomizer` reports the native format, and the
-   session's startup line counts six runnable hooks with no rejected answers.
-2. Whether `transcript_path` is set in a normal run, and that the log is where the adapter looks.
-3. How a failing shell command is reported (`PostToolUse` with the exit code in its text, or
-   `PostToolUseFailure`), and the shell tool's argument key.
-4. Whether Muse waits for the asynchronous `SessionEnd` hook at exit, and whether a resumed
-   session keeps the context its first start added.
-5. That `muse exec` accepts the side call's flags and prints its answer as `run_terminal`.
-6. Whether the record shapes still hold on the current release (the field names come from Meta's
-   example records and a 0.2.1 capture). Meta calls the folder layout an implementation detail.
+1. `muse plugins validate` reports `valid tokeneconomizer native hooks=6` (one warning: several
+   manifests, `.muse-plugin` picked); `install` and `approve` leave six hooks
+   `trusted_enabled`, and every one of them ran and answered `{}` with no rejection.
+2. `transcript_path` is null in every hook. The log is at
+   `<data dir>/sessions/YYYY/MM/DD/<id>/session.jsonl`, where the adapter finds it.
+3. A shell call that exits non-zero is reported as `PostToolUseFailure`, its JSON result in
+   `error`; one that exits 0 as `PostToolUse`. The shell tool is `bash` and its argument key is
+   `command` (with `description` and `workdir`). A missing file for `read_file` is a
+   `PostToolUseFailure` whose `error` starts `tool failed: `. *Fixed*: the exit code was not read
+   from the JSON, so the loop guard saw no failure at all.
+4. Muse does not wait for the `SessionEnd` hook at exit, asynchronous or not (`hooks_ms` about
+   500 in `session.end`); the in-hook fold this adapter used was cut short every time. A
+   detached `te fold` survives, so the plugin now folds the way it does elsewhere. A resumed
+   session keeps what its first start added (the model recalled it with nothing injected again).
+5. `muse exec` accepts every side-call flag, writes no session with `--no-session-log`, and
+   prints its answer as a `run_terminal` record. *Fixed*: the answer and its usage are inside
+   each line's `payload`, which the reader did not look into, so every side call came back
+   empty. Muse's "missing meta credentials" now pauses the side calls.
+6. The record shapes the reader uses still hold (`runtime.session.metadata`, `route_facts`,
+   `run.model.configured`, and the `started`, `assistant_tool_calls_committed`,
+   `tool_result_batch_committed`, `assistant_message_committed`, `model_completed` and
+   `terminal` run events), as do `retained_frame` lines. *Fixed*: a shell result in the log is
+   the same JSON object, never `tool failed: `, so failed shell calls read as successes.
+
+Still unchecked: macOS; the terminal UI's notice display; a micro-skills proposer call from a
+hook with stored Muse credentials.
 
 Compatibility: macOS and Linux (the wrappers are POSIX shell; Windows is not supported).

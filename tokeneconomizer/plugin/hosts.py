@@ -258,12 +258,6 @@ class Host:
         """Is `path` the log of session `sid`? Most agents name the file after the session."""
         return os.path.basename(path) == f"{sid}.jsonl"
 
-    # Whether the agent stops what a hook leaves running once the hook returns (Muse Code). Then
-    # a finished session is folded inside its SessionEnd hook rather than in a detached process,
-    # the loop guard asks no judge (a detached job), and the history import is not started from
-    # a hook (`te history import` runs it from a terminal).
-    stops_background = False
-
 
 def _failure_response(p):
     """A PostToolUseFailure payload's `error` as a response; None for any other payload. A
@@ -1353,14 +1347,18 @@ class Muse(Host):
         setting reaches it: settings come from the plugin's config file.
       * Tool events report the tool's own directory as `cwd`; the session's is kept from its
         start (`prepare`), so a call run elsewhere is still this repository's.
-      * `transcript_path` may be null; the log is found under Muse's data directory
-        (`trace.muse_find_log`).
-      * Muse stops the background processes a plugin hook leaves running once it returns
-        (changelog 1.4.8), so a finished session is folded inside its SessionEnd hook rather
-        than in a detached `te fold` (`stops_background`); the manifest marks that hook
-        asynchronous (observe-only), which is unverified on a live Muse. A fold cut short is
-        retried at a later session's end. For the same reason the loop guard asks no judge here
-        (its judge is a detached job), and the history import runs only from a terminal.
+      * `transcript_path` is null in every hook (1.4.18); the log is found under Muse's data
+        directory (`trace.muse_find_log`).
+      * A shell call's result is a JSON object (`trace.muse_shell_result`), in `tool_response`
+        when it exits 0 and in a PostToolUseFailure's `error` otherwise; `tool_call` reads the
+        output and the exit code from it.
+      * Muse's own helper agents (its reminder agents) run plugin hooks too, under their own
+        `session_id`, with `MUSE_THREAD_ID` set to it and `MUSE_SESSION_ID` to the top-level
+        session's; `prepare` leaves those alone.
+      * Muse gives the hooks it runs at exit about half a second (`shutdown_steps.hooks_ms` in
+        the log's `session.end`) and does not wait for an asynchronous one, so the fold cannot
+        run inside SessionEnd; the detached `te fold` it starts, in a session of its own,
+        outlives both the hook and the `muse` process (1.4.18, `muse exec` and the terminal UI).
 
     Tool pruning is not available: Muse has no per-repository setting that removes a built-in
     tool from the model's list (`denylist.supports` says so).
@@ -1371,7 +1369,6 @@ class Muse(Host):
     # model passes a still-stuck notice on as well.
     relays_notices = True
     keeps_history = True
-    stops_background = True
     CONTEXT_EVENTS = _MUSE_CONTEXT_EVENTS
     OUTPUT_CAP = 15000                 # bytes of serialized answer; Muse kills a hook at 16 KiB
     NOTICE_CAP = 1000                  # characters Muse keeps of a `systemMessage`
@@ -1484,6 +1481,16 @@ class Muse(Host):
         low = name.lower()
         if low in _MUSE_SHELL:
             cmd = args.get("command", args.get("cmd", args.get("script", "")))
+            # The shell's result is a JSON object, in `tool_response` (exit 0) or in a
+            # PostToolUseFailure's `error` (any other exit), with a `chunk_id` that differs on
+            # every call: the output and the exit code are what the guard compares.
+            raw = p.get("tool_response")
+            raw = raw if raw is not None else p.get("error")
+            shell = trace.muse_shell_result(raw)
+            if shell is not None:
+                out, shell_code = shell
+                text = out[:RESULT_CAP]
+                code = shell_code if shell_code is not None else code
             return "bash", {"command": str(cmd or "")}, text, code
         path = args.get("file_path") or args.get("path") or ""
         if low in _MUSE_READ:

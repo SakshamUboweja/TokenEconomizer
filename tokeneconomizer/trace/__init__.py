@@ -40,7 +40,8 @@ from .hermes import (hermes_export, hermes_find_session, hermes_prompt_count, he
                      hermes_session_to_claude, hermes_session_usage, hermes_tool)
 from .muse import (muse_data_dir, muse_exec_reply, muse_find_log,
                    muse_log_head, muse_prompt_count, muse_prompt_turns, muse_safe_session_id,
-                   muse_session_to_claude, muse_session_usage, muse_sessions)
+                   muse_session_to_claude, muse_session_usage, muse_sessions,
+                   muse_shell_result)
 from .opencode import (opencode_prompt_count, opencode_run_reply, opencode_session_info,
                        opencode_session_to_claude, opencode_session_usage)
 from .pi import (pi_active_branch, pi_json_reply, pi_prompt_count, pi_session_header,
@@ -71,7 +72,7 @@ __all__ = [
     "hermes_session_usage", "hermes_tool",
     "muse_data_dir", "muse_exec_reply", "muse_find_log", "muse_log_head",
     "muse_prompt_count", "muse_prompt_turns", "muse_safe_session_id", "muse_session_to_claude",
-    "muse_session_usage", "muse_sessions",
+    "muse_session_usage", "muse_sessions", "muse_shell_result",
     "opencode_prompt_count", "opencode_run_reply", "opencode_session_info",
     "opencode_session_to_claude", "opencode_session_usage",
     "pi_active_branch", "pi_json_reply", "pi_prompt_count", "pi_session_header",

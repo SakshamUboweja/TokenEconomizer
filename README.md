@@ -198,9 +198,8 @@ muse plugins approve tokeneconomizer
 
 Start a new Muse session (approved hooks load in the next one) and run
 `~/.tokeneconomizer/bin/te --host muse status` from a terminal in the repository. Muse has no
-per-repository tool setting it documents, so tool pruning stays off; the loop guard redirects
-only at its rule backstop (Muse stops a hook's background jobs, the judge among them); and the
-plugin's own model calls stay off until `muse_sidecall` is on. See **[`docs/MUSE.md`](docs/MUSE.md)**.
+per-repository tool setting it documents, so tool pruning stays off, and the plugin's own model
+calls (the loop guard's judge among them) stay off until `muse_sidecall` is on. See **[`docs/MUSE.md`](docs/MUSE.md)**.
 
 **Cursor Agent** (experimental)
 
@@ -344,11 +343,11 @@ have not been tested yet.
   repeated it). Droid's TUI has no persistent per-tool setting (Factory issue #65), so tool
   pruning is not available; its session logs are read for micro-skills and the loop guard, and
   priced from the usage Droid writes beside each log. See [its notes](docs/DROID.md).
-- **Muse Code** (Meta) support is experimental and has **not been run against a real `muse`
-  yet**: the adapter follows Meta's published manual, changelog and SDK guides, and its tests
-  use sessions and hook payloads built from them. Muse clears its hooks' environment, so
-  `TE_*` variables do not reach them (use `te config set`). Tool pruning is not available. See
-  [its notes](docs/MUSE.md), which list what a live run still has to confirm.
+- **Muse Code** (Meta) support is experimental: the adapter follows Meta's published manual,
+  changelog and SDK guides, and was checked against a live Muse Code 1.4.18 on Linux (hooks,
+  session log, failing shell calls, folding at exit, resume, side-call flags). Muse clears its
+  hooks' environment, so `TE_*` variables do not reach them (use `te config set`). Tool pruning
+  is not available. See [its notes](docs/MUSE.md).
 
 ### Everyday commands
 

@@ -23,8 +23,10 @@ The records read here:
       - `started` with a non-empty `prompt`: a prompt (a task's `started` carries none);
       - `assistant_tool_calls_committed`: `tool_calls[].{call_id, name, args}`, `args` a JSON
         string;
-      - `tool_result_batch_committed`: `results[].{tool_call_id, text}`; a failure is text that
-        starts `tool failed: ` (there is no error flag);
+      - `tool_result_batch_committed`: `results[].{tool_call_id, text}`; there is no error
+        flag. A failed tool's text starts `tool failed: `; a shell call's text is a JSON object
+        (`{chunk_id, command, exit_code, terminal_status, output, ...}`, 1.4.18) whatever its
+        exit code (`muse_shell_result`);
       - `assistant_message_committed`: `text`;
       - `model_completed`: `model`, `usage{input_tokens, output_tokens, cached_tokens,
         cache_read_tokens, cache_write_tokens, reasoning_tokens}`, one per model call;
@@ -258,6 +260,41 @@ def claude_tool_input(native, args):
     return args
 
 
+def muse_shell_result(text):
+    """`(output, exit_code)` of a shell call's result, which Muse (1.4.18) reports, in its log
+    and in the hook's `tool_response` / `error`, as a JSON object
+    `{chunk_id, command, description, exit_code, terminal_status, terminal_reason, output,
+    original_output_bytes, original_output_tokens, truncated}`; None for any other text.
+    `exit_code` is None where the object has none (a call that timed out, say)."""
+    if not isinstance(text, str) or not text.lstrip().startswith("{"):
+        return None
+    try:
+        obj = json.loads(text)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(obj, dict) or not isinstance(obj.get("output"), str) or \
+            not ("exit_code" in obj or "terminal_status" in obj):
+        return None
+    code = obj.get("exit_code")
+    if not isinstance(code, int) or isinstance(code, bool):
+        code = None
+        if obj.get("terminal_status") not in (None, "completed"):
+            code = 1                 # failed, timed out or killed, with no code of its own
+    return obj["output"], code
+
+
+def _tool_result(text):
+    """(content, is_error) of a tool result's text, as Claude Code writes them: a shell call's
+    output, with "Exit code N" first when it failed (Claude Code's own wording)."""
+    shell = muse_shell_result(text)
+    if shell is not None:
+        out, code = shell
+        if code:
+            return f"Exit code {code}\n{out}", True
+        return out, False
+    return text, text.startswith(FAILED_PREFIX)
+
+
 def _claude_lines(records, cwd):
     """(Claude line, is_prompt) for each conversation event of a session, in order."""
     model = None
@@ -302,8 +339,9 @@ def _claude_lines(records, cwd):
                 if not isinstance(res, dict) or not _str(res.get("tool_call_id")):
                     continue
                 text = res.get("text") if isinstance(res.get("text"), str) else ""
+                content, error = _tool_result(text)
                 blocks.append({"type": "tool_result", "tool_use_id": res["tool_call_id"],
-                               "content": text, "is_error": text.startswith(FAILED_PREFIX)})
+                               "content": content, "is_error": error})
             if blocks:
                 line = {"type": "user", "message": {"role": "user", "content": blocks}}
         elif kind == "assistant_message_committed":
@@ -471,7 +509,9 @@ def _usage_from(d):
 def muse_exec_reply(stdout):
     """`(text, usage)` from `muse exec --json` output: the answer from its `run_terminal` line
     (else the last assistant text it printed), the usage from a `run.usage` line, if any. Lines
-    come either flat or as MSP view notifications (`{"method", "params"}`); both are read."""
+    come as record envelopes (1.4.18: `{"payload_type", "payload": {"kind": "run_terminal",
+    "text"}}` and `{"payload_type": "run.usage", "payload": {"kind": "run_usage", "models":
+    [...]}}`), flat, or as MSP view notifications (`{"method", "params"}`); all are read."""
     text, last, usage = "", "", None
     for raw in (stdout or "").splitlines():
         raw = raw.strip()
@@ -484,8 +524,9 @@ def muse_exec_reply(stdout):
         if not isinstance(obj, dict):
             continue
         items = [obj]
-        if isinstance(obj.get("params"), dict):
-            items.append(obj["params"])
+        for key in ("params", "payload"):
+            if isinstance(obj.get(key), dict):
+                items.append(obj[key])
         for it in items:
             kind = str(it.get("kind") or it.get("type") or it.get("method") or "")
             if kind == "run_terminal" and isinstance(it.get("text"), str) and it["text"].strip():

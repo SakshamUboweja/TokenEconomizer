@@ -82,8 +82,10 @@ def _env():
 
 
 # What a CLI says when it is not signed in -- Copilot's "To authenticate, ... run the '/login'
-# command" under BYOK, Claude Code's "Please run /login".
-_SIGNED_OUT_RE = re.compile(r"To authenticate|/login\b|\b[Nn]ot (?:logged|signed) in")
+# command" under BYOK, Claude Code's "Please run /login", Muse Code's "missing meta credentials:
+# run `muse login` or set META_API_KEY" (1.4.18; its hooks get no META_API_KEY).
+_SIGNED_OUT_RE = re.compile(r"To authenticate|/login\b|\b[Nn]ot (?:logged|signed) in|"
+                            r"\bmissing \w+ credentials\b")
 
 
 def _log(text):
