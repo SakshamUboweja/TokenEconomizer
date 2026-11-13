@@ -95,7 +95,7 @@ def _session_ctx(args, session_id):
     ctx = _ctx(args)
     if session_id and repos.pinned(ctx.root, ctx.host.name, session_id) is not None:
         pinned = _ctx(args, session_id=session_id)
-        if os.path.exists(pinned.store.path("sessions", f"{session_id}.json")):
+        if os.path.exists(pinned.store.path(paths.session_doc(session_id))):
             return pinned
     return ctx
 

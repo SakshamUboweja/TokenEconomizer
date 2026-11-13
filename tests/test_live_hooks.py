@@ -966,6 +966,42 @@ def test_a_session_whose_end_was_missed_is_folded_by_the_next_start(env, repo, t
     assert "lost" in store_for(env, repo).read("folded.json")
 
 
+@pytest.mark.parametrize("sid", ["<abs>/package", "../../escaped", "a" * 260])
+def test_a_session_id_names_one_record_under_sessions_and_is_folded_once(env, repo, tmp_path,
+                                                                           sid):
+    """The id is the payload's: one that is a path, climbs out with `..`, or is too long for a
+    file name still names one record in the repository's `sessions/`, touches no file outside
+    it, and the session is folded once."""
+    sid = sid.replace("<abs>", str(tmp_path))
+    pkg = tmp_path / "package.json"
+    pkg.write_text('{"name": "demo"}\n')
+    t = trap_session(str(tmp_path / "s.jsonl"), repo, 0)
+    base = {"session_id": sid, "transcript_path": t, "cwd": repo}
+    assert call(env, dict(base, hook_event_name="SessionStart", source="startup")) == {}
+    call(env, dict(base, hook_event_name="UserPromptSubmit", prompt="fix bug 0"))
+    call(env, dict(base, hook_event_name="SessionEnd", reason="other"))
+    t2 = str(tmp_path / "next.jsonl")
+    open(t2, "w").close()
+    call(env, {"hook_event_name": "SessionStart", "session_id": "next", "source": "startup",
+               "transcript_path": t2, "cwd": repo})           # folds what is pending
+    st = store_for(env, repo)
+    assert pkg.read_text() == '{"name": "demo"}\n'
+    assert not os.path.exists(os.path.join(env["TOKENECONOMIZER_HOME"], "errors.log"))
+    recs = [st.read(os.path.join("sessions", n)) for n in os.listdir(st.path("sessions"))]
+    assert sorted(r["session_id"] for r in recs) == sorted([sid, "next"])
+    assert [r["session_id"] for r in st.read_lines("ledger.jsonl")] == [sid]
+    assert glob.glob(os.path.join(env["TOKENECONOMIZER_HOME"], "**", "escaped.json"),
+                     recursive=True) == []
+
+
+def test_the_ids_agents_send_keep_their_record_names(env, repo):
+    for sid in ("1b3c2ec5-e9fc-4d54-a7fb-7357df0fea59", "rollout-2026-11-13T10-00-00-019a",
+                "ses_6f1a2b", "s1"):
+        call(env, {"hook_event_name": "SessionStart", "session_id": sid, "source": "startup",
+                   "transcript_path": "", "cwd": repo})
+        assert store_for(env, repo).read(f"sessions/{sid}.json")["session_id"] == sid
+
+
 # ---- never break the session ---------------------------------------------------------------
 def test_garbage_input_and_internal_errors_answer_no_change(env, repo, monkeypatch):
     out = io.StringIO()

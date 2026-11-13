@@ -30,7 +30,7 @@ import traceback
 from .. import loopguard
 from . import denylist, fold, history, hookqueue, repomap, repos, sidecall
 from .hosts import merge_outputs
-from .paths import ensure_launcher
+from .paths import ensure_launcher, session_doc
 
 TURN_HISTORY = 200
 
@@ -47,7 +47,7 @@ class LiveController:
 
     # ---- plumbing -----------------------------------------------------------------------
     def _sess_name(self):
-        return os.path.join("sessions", f"{self.sid}.json")
+        return session_doc(self.sid)
 
     def _session(self):
         s = self.store.read(self._sess_name())

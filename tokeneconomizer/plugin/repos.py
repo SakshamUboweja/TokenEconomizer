@@ -34,7 +34,7 @@ import traceback
 from ..names import repo_filename
 from . import hosts as hosts_mod
 from .paths import (BY_PATH, BY_REMOTE, RepoId, _slug, digest, home_dir, is_git_entry,
-                    normalize_remote, origin_url, repo_identity, state_root)
+                    normalize_remote, origin_url, repo_identity, session_doc, state_root)
 from .store import Store
 
 INDEX = "index.json"
@@ -414,12 +414,12 @@ def _merge_host(src, dst, sids, whole, label="", timeout=LOCK_WAIT_S):
             if rec:
                 if sid in refold:
                     rec["folded"] = False
-                dst.write(os.path.join("sessions", f"{sid}.json"), rec)
+                dst.write(session_doc(sid), rec)
         for sid in refold - incoming:
             rec = dict(d_sess.get(sid) or {})
             if rec:
                 rec["folded"] = False
-                dst.write(os.path.join("sessions", f"{sid}.json"), rec)
+                dst.write(session_doc(sid), rec)
         for r in src.read_lines("events.jsonl"):
             if r.get("session_id") in incoming:
                 dst.append("events.jsonl", r)
@@ -441,7 +441,7 @@ def _merge_host(src, dst, sids, whole, label="", timeout=LOCK_WAIT_S):
             src.write("folded.json", {s: v for s, v in s_folded.items() if s not in incoming})
             for sid in incoming:
                 with contextlib.suppress(OSError):
-                    os.remove(src.path("sessions", f"{sid}.json"))
+                    os.remove(src.path(session_doc(sid)))
         return {"moved": len(incoming), "refold": len(refold)}
 
 

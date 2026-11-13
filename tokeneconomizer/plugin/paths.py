@@ -267,3 +267,12 @@ def repo_identity(cwd, env=None):
 def repo_state_dir(repo, host, env=None):
     """`<root>/repos/<repo-key>/<host>` -- one host's state for one repository."""
     return os.path.join(state_root(env), "repos", repo.key, host)
+
+
+def session_doc(session_id):
+    """`sessions/<id>.json` -- a session's record in its host's state, the id made one file name
+    by the rule its pin uses (`repos._pin_name`). The id comes from the hook payload: joined as
+    it came, an absolute path or `..` would put the record outside the state, and a long one
+    would fail every hook. The ids agents send (UUIDs and the like) keep their names."""
+    return os.path.join("sessions", re.sub(r"[^A-Za-z0-9._-]", "_", str(session_id))[:200]
+                        + ".json")

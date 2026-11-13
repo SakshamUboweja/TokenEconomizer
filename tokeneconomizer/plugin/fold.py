@@ -29,6 +29,7 @@ from . import accounting, denylist, sidecall
 from . import adapter as live_adapter
 from .adapter import LiveAdapter, load_catalog
 from .hosts import FoldLater
+from .paths import session_doc
 
 STALE_S = 600          # an unfolded session whose transcript is quiet this long is over
 # A fold never runs in a hook -- it is a detached process, or `te fold` -- so it can wait for
@@ -462,7 +463,7 @@ def fold_locked(ctx, session_id, transcript_path=None, imported=False, span=None
     no model is called, no deny rule is held, written or given back, and its ledger record and
     `folded.json` entry say `imported`. `span` is (started, ended) for a session the plugin
     never recorded."""
-    sess_name = os.path.join("sessions", f"{session_id}.json")
+    sess_name = session_doc(session_id)
     folded = ctx.store.read("folded.json") or {}
     if session_id in folded:
         return None
@@ -554,11 +555,13 @@ def pending_sessions(ctx, exclude=(), stale_s=STALE_S, now=None):
     sess_dir = ctx.store.path("sessions")
     if not os.path.isdir(sess_dir):
         return out
+    # A record's file name is its id made safe (`session_doc`), and `folded.json` keeps the id.
+    done = {os.path.basename(session_doc(s)) for s in (*folded, *exclude)}
     for name in sorted(os.listdir(sess_dir)):
         if not name.endswith(".json"):
             continue
         sid = name[:-5]
-        if sid in folded or sid in exclude:
+        if sid in folded or sid in exclude or name in done:
             continue
         sess = ctx.store.read(os.path.join("sessions", name)) or {}
         tp = sess.get("transcript") or ""

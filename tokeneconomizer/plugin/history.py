@@ -58,6 +58,7 @@ import traceback
 from .. import loopguard, trace
 from . import fold
 from .hosts import _EXIT_RE, RESULT_CAP, claude_success_code
+from .paths import session_doc
 
 STATE = fold.HISTORY
 LOG = "history.log"
@@ -198,7 +199,7 @@ def plan(ctx, now=None):
             skip("too_large")
         elif sid in folded:
             skip("already_folded")
-        elif os.path.exists(ctx.store.path("sessions", f"{sid}.json")):
+        elif os.path.exists(ctx.store.path(session_doc(sid))):
             skip("recorded_live")
         else:
             prompts = ctx.host.prompt_count(log["path"]) or 0
@@ -222,7 +223,7 @@ def _still_eligible(ctx, item):
         return "unsafe_id"
     if sid in (ctx.store.read("folded.json") or {}):
         return "already_folded"
-    if os.path.exists(ctx.store.path("sessions", f"{sid}.json")):
+    if os.path.exists(ctx.store.path(session_doc(sid))):
         return "recorded_live"
     try:
         if os.path.getsize(path) > MAX_BYTES:
