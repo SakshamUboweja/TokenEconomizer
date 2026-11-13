@@ -264,7 +264,7 @@ def test_model_written_arguments_cannot_break_the_reader(tmp_path):
 def test_the_data_directory_and_the_log_are_found(tmp_path):
     assert trace.muse_data_dir({"TE_MUSE_DATA_DIR": "/a"}) == "/a"
     assert trace.muse_data_dir({"MUSE_PLUGIN_DATA_DIR": "/h/m/plugins/data/tokeneconomizer"}) \
-        == "/h/m"
+        == os.path.normpath("/h/m")
     assert trace.muse_data_dir({"MUSE_PLUGIN_DATA_DIR": "/elsewhere/x", "XDG_DATA_HOME": "/x"}) \
         == os.path.join("/x", "muse")
     assert trace.muse_data_dir({"HOME": "/h"}) == os.path.join("/h", ".local", "share", "muse")
@@ -400,7 +400,8 @@ def test_a_tool_event_is_filed_under_the_session_s_directory(tmp_path):
                       "cwd": "/somewhere/else", "tool_name": "bash"}, env)
     assert p["cwd"] == repo
     side = os.path.join(str(tmp_path / "s"), "muse-sessions", f"{SID}.json")
-    assert oct(os.stat(side).st_mode & 0o777) == "0o600"
+    if os.name == "posix":                 # Windows keeps it private by ACL, not mode bits
+        assert oct(os.stat(side).st_mode & 0o777) == "0o600"
     # The end is filed there too, and the record goes with it.
     assert host.prepare({"hook_event_name": "SessionEnd", "session_id": SID,
                          "cwd": "/x"}, env)["cwd"] == repo
@@ -546,7 +547,8 @@ def test_a_side_call_runs_with_no_tool_and_its_prompt_in_a_file(monkeypatch):
     assert all(prompt not in c for c in cmd)               # not on the command line
     assert s["prompt"] == prompt
     # While it runs, its directory is registered as a side call's, privately; then it is not.
-    assert s["side"] and s["registered"] == os.path.realpath(s["cwd"]) and s["mode"] == 0o600
+    assert s["side"] and s["registered"] == os.path.realpath(s["cwd"])
+    assert s["mode"] == 0o600 or os.name != "posix"
     assert not os.path.exists(s["entry"])
     for flag in ("--preset", "--no-session-log", "--json"):
         assert flag in cmd
