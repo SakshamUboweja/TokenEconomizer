@@ -377,6 +377,31 @@ def test_a_pinned_session_follows_its_repository_into_a_merge(tmp_path, env):
     assert repos.pinned(root, "claude", "s2").key == repo.key
 
 
+@pytest.mark.parametrize("side", ["src", "dst"])
+def test_a_merge_stopped_at_a_busy_agent_copies_nothing_and_its_retry_copies_once(
+        tmp_path, env, side):
+    """A later agent's busy lock leaves the destination as it was: the retry copies the earlier
+    agent's events and envelope turns once, not once per try."""
+    root = env["TOKENECONOMIZER_HOME"]
+    for h in ("claude", "codex"):
+        st = state(env, "old-0123456789", h)
+        legacy_session(st, f"s-{h}", str(tmp_path / "gone.jsonl"))
+        st.append("events.jsonl", {"kind": "turn", "session_id": f"s-{h}", "at": 1.0})
+        st.write("envelope.json", {"resolved_turns": [2], "resolved_snaps": [{"turns": 2}]})
+    busy = state(env, "old-0123456789" if side == "src" else "new-0123456789", "codex")
+    with busy.locked("fold", timeout=0) as got:
+        assert got
+        assert repos.merge(root, "old-0123456789", "new-0123456789", timeout=0) is None
+    dst = state(env, "new-0123456789")
+    assert dst.read("envelope.json") is None and dst.read_lines("events.jsonl") == []
+    assert repos.merge(root, "old-0123456789", "new-0123456789", timeout=0) is not None
+    for h in ("claude", "codex"):
+        dst = state(env, "new-0123456789", h)
+        assert dst.read("envelope.json")["resolved_turns"] == [2]
+        assert dst.read("envelope.json")["resolved_snaps"] == [{"turns": 2}]
+        assert [r["session_id"] for r in dst.read_lines("events.jsonl")] == [f"s-{h}"]
+
+
 def test_te_repos_lists_merges_and_says_what_it_did(tmp_path, env, monkeypatch, capsys):
     for k, v in env.items():
         monkeypatch.setenv(k, v)
