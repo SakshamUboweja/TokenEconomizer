@@ -1570,6 +1570,21 @@ def test_copilot_trust_is_read_from_its_config(tmp_path, repo):
     assert denylist.copilot_folder_trusted(repo, env) is False
 
 
+def test_copilot_trust_is_unknown_for_a_config_it_does_not_understand(tmp_path, repo):
+    home = tmp_path / "copilot-home"
+    home.mkdir()
+    env = {"COPILOT_HOME": str(home)}
+    # valid JSON that is not an object, or a trustedFolders that is not a list: trust unknown,
+    # never a crash, and never a string read character by character (its "/" trusts everything)
+    for doc in ([], "x", 3, {"trustedFolders": "/"}, {"trustedFolders": {"/": True}}):
+        (home / "config.json").write_text(json.dumps(doc))
+        assert denylist.copilot_trusted_folders(env) is None, doc
+        assert denylist.copilot_folder_trusted(repo, env) is None, doc
+    for doc in ({}, {"trustedFolders": None}):
+        (home / "config.json").write_text(json.dumps(doc))
+        assert denylist.copilot_folder_trusted(repo, env) is False, doc
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows paths are case-insensitive")
 def test_copilot_trust_matches_paths_with_different_case_on_windows(
     tmp_path, monkeypatch

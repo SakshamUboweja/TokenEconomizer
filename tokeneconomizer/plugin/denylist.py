@@ -480,7 +480,14 @@ def copilot_trusted_folders(env=None):
                                    if not ln.lstrip().startswith("//")))
     except (OSError, ValueError):
         return None
-    return [f for f in (doc.get("trustedFolders") or []) if isinstance(f, str)]
+    if not isinstance(doc, dict):
+        return None
+    folders = doc.get("trustedFolders")
+    if folders is None:
+        return []
+    if not isinstance(folders, list):
+        return None
+    return [f for f in folders if isinstance(f, str)]
 
 
 def copilot_folder_trusted(path, env=None):
