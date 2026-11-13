@@ -966,6 +966,33 @@ def test_a_session_whose_end_was_missed_is_folded_by_the_next_start(env, repo, t
     assert "lost" in store_for(env, repo).read("folded.json")
 
 
+def test_a_session_whose_checkout_is_gone_by_its_end_is_still_folded(
+        env, repo, tmp_path, monkeypatch):
+    """A worktree or scratch clone can be removed while its session runs. The detached fold
+    cannot start in that directory, so it starts in the state directory, still named the
+    checkout's `--cwd`, and the session's pin finds the repository."""
+    import shutil
+    import subprocess
+    env = {k: v for k, v in env.items() if k != "TE_FOLD_SYNC"}      # the real, detached fold
+    st = store_for(env, repo)
+    t = trap_session(str(tmp_path / "s.jsonl"), repo, 0)
+    base = {"session_id": "s", "transcript_path": t, "cwd": repo}
+    call(env, dict(base, hook_event_name="SessionStart", source="startup"))
+    shutil.rmtree(repo)
+    started = []
+    with monkeypatch.context() as m:
+        m.setattr(subprocess, "Popen", lambda cmd, **kw: started.append((cmd, kw)))
+        assert call(env, dict(base, hook_event_name="SessionEnd", reason="other")) == {}
+    assert not os.path.exists(os.path.join(env["TOKENECONOMIZER_HOME"], "errors.log"))
+    assert len(started) == 1
+    cmd, kw = started[0]
+    assert os.path.isdir(kw["cwd"]) and cmd[cmd.index("--cwd") + 1] == repo
+    child_env = dict(kw["env"], **{k: os.environ[k] for k in ("SYSTEMROOT",) if k in os.environ})
+    subprocess.run(cmd, cwd=kw["cwd"], env=child_env, stdin=subprocess.DEVNULL, check=True,
+                   timeout=120)
+    assert "s" in st.read("folded.json") and len(st.read_lines("ledger.jsonl")) == 1
+
+
 # ---- never break the session ---------------------------------------------------------------
 def test_garbage_input_and_internal_errors_answer_no_change(env, repo, monkeypatch):
     out = io.StringIO()

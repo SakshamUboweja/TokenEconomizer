@@ -84,13 +84,17 @@ class LiveContext:
         cmd = [sys.executable, "-m", "tokeneconomizer.plugin.cli", *argv,
                "--host", self.host.name, "--cwd", self.repo.root]
         self.store.ensure()
+        # The checkout may be gone by now (a worktree or scratch clone removed while the session
+        # ran), and a process cannot start in a directory that is not there. `--cwd` still
+        # names it: the session's pin finds the repository without it.
+        cwd = self.repo.root if os.path.isdir(self.repo.root) else self.store.base
         if os.name == "nt":
             from . import winspawn
-            return winspawn.spawn(cmd, self.repo.root, env, self.store.path(log_name))
+            return winspawn.spawn(cmd, cwd, env, self.store.path(log_name))
         log = open(self.store.path(log_name), "a", encoding="utf-8")
         try:
             subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                             cwd=self.repo.root, env=env, start_new_session=True)
+                             cwd=cwd, env=env, start_new_session=True)
         finally:
             log.close()
         return True
