@@ -456,13 +456,20 @@ def merge_whole(root, src_key, dst_key, label="", timeout=LOCK_WAIT_S):
              for h in _host_dirs(src_dir)]
     # Every agent's locks, on both sides, before anything is copied: the source stays whole
     # until it is set aside, so a merge stopped at a busy agent would copy the agents before
-    # it again on the next try, their events and envelope turns twice.
-    with _locks([st for _, src, dst in pairs for st in (src, dst)], timeout) as ok:
-        if not ok:
+    # it again on the next try, their events and envelope turns twice. None is held while
+    # waiting for a busy one, so the other agents' folds and guard go on meanwhile.
+    stores = [st for _, src, dst in pairs for st in (src, dst)]
+    deadline = time.time() + timeout
+    while True:
+        with _locks(stores, 0) as ok:
+            if ok:
+                for h, src, dst in pairs:
+                    out[h] = _merge_host(src, dst, list(_sessions(src)), whole=True,
+                                         label=label, locked=True)
+                break
+        if time.time() >= deadline:
             return None
-        for h, src, dst in pairs:
-            out[h] = _merge_host(src, dst, list(_sessions(src)), whole=True, label=label,
-                                 locked=True)
+        time.sleep(0.05)
     for name in ("config.json",):           # a repository's own settings, if it had none
         if os.path.exists(os.path.join(src_dir, name)) and \
                 not os.path.exists(os.path.join(dst_dir, name)):

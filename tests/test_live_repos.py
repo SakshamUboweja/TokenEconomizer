@@ -9,6 +9,8 @@ repository it started in; and a session is folded once, under one key.
 import io
 import json
 import os
+import threading
+import time
 
 import pytest
 
@@ -400,6 +402,26 @@ def test_a_merge_stopped_at_a_busy_agent_copies_nothing_and_its_retry_copies_onc
         assert dst.read("envelope.json")["resolved_turns"] == [2]
         assert dst.read("envelope.json")["resolved_snaps"] == [{"turns": 2}]
         assert [r["session_id"] for r in dst.read_lines("events.jsonl")] == [f"s-{h}"]
+
+
+def test_a_merge_waiting_for_a_busy_agent_holds_no_other_agents_locks(tmp_path, env):
+    """While it waits for one agent's lock, the other agents' folds can take theirs."""
+    root = env["TOKENECONOMIZER_HOME"]
+    for h in ("claude", "codex"):
+        legacy_session(state(env, "old-0123456789", h), f"s-{h}", str(tmp_path / "gone.jsonl"))
+    done = []
+    with state(env, "new-0123456789", "codex").locked("fold", timeout=0) as got:
+        assert got
+        t = threading.Thread(target=lambda: done.append(
+            repos.merge(root, "old-0123456789", "new-0123456789", timeout=30)))
+        t.start()
+        time.sleep(0.5)
+        for st in (state(env, "old-0123456789"), state(env, "new-0123456789")):
+            with st.locked("fold", timeout=0) as free:
+                assert free
+    t.join()
+    assert done[0] is not None
+    assert "s-claude" in state(env, "new-0123456789").read("folded.json")
 
 
 def test_te_repos_lists_merges_and_says_what_it_did(tmp_path, env, monkeypatch, capsys):
