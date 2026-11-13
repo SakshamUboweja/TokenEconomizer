@@ -104,6 +104,36 @@ def test_a_named_python_without_aider_is_reported_not_replaced(env, repo, tmp_pa
     assert "cannot import aider" in st["error"] and not st.get("map")
 
 
+def test_a_kept_map_keeps_its_commit_when_no_aider_is_found(env, tmp_path):
+    from tokeneconomizer.plugin.context import LiveContext
+    from tokeneconomizer.plugin.hosts import HOSTS
+    root = tmp_path / "proj"
+    root.mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+
+    def commit(msg):
+        subprocess.run(git + ["add", "-A"], cwd=root, check=True)
+        subprocess.run(git + ["commit", "-qm", msg], cwd=root, check=True)
+        return repomap.head_commit(str(root))
+
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / "calc.py").write_text("def add_numbers(a, b):\n    return a + b\n")
+    c1 = commit("c1")
+    ctx = LiveContext.build(HOSTS["claude"](), str(root), _env(env, tmp_path))
+    made = repomap.refresh(ctx)
+    assert made["commit"] == c1 and made["map"] and not repomap.stale(ctx)
+
+    (root / "calc.py").write_text("def subtract_numbers(a, b):\n    return a - b\n")
+    c2 = commit("c2")
+    ctx = LiveContext.build(HOSTS["claude"](), str(root), _env(env, tmp_path, probe=1))
+    st = repomap.refresh(ctx)                    # the named Python cannot import aider
+    assert "cannot import aider" in st["error"]
+    assert st["map"] == made["map"]              # the old map is kept ...
+    assert st["commit"] == c1 != c2              # ... as the map of the commit it was made for
+    assert repomap.read_state(ctx)["commit"] == c1
+    assert repomap.stale(ctx)                    # so the next session start tries again
+
+
 def test_prompt_identifiers():
     ids = repomap.prompt_idents("Fix `Model.save` so get_readonly_fields works on ModelAdmin")
     assert {"save", "get_readonly_fields", "ModelAdmin"} <= set(ids)

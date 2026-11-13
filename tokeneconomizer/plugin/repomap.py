@@ -158,7 +158,9 @@ def refresh(ctx):
     python = find_python(ctx)
     if not python:
         named = ctx.config.repomap_python
-        state = dict(read_state(ctx), commit=commit, updated=time.time(), error=(
+        # A map kept from before stays labelled with the commit it was made for, so it still
+        # reads as stale and the next session start tries again.
+        state = dict(read_state(ctx), updated=time.time(), error=(
             f"repomap_python {named} cannot import aider" if named else
             "no Python with aider found (install aider-chat, or set repomap_python)"))
         _write_state(ctx, state)
