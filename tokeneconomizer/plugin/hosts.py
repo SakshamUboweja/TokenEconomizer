@@ -837,7 +837,10 @@ class Antigravity(Host):
         return str(p.get("session_id") or p.get("conversationId") or "")
 
     def transcript(self, p):
-        return p.get("transcript_path") or p.get("transcriptPath") or ""
+        # Only a string: `open()` takes an int (or a bool) as a file descriptor, and closing it
+        # after the read would close the hook's own stdout (`1`) before it answers.
+        path = p.get("transcript_path") or p.get("transcriptPath")
+        return path if isinstance(path, str) else ""
 
     def cwd(self, p, env):
         roots = p.get("workspacePaths")

@@ -258,6 +258,32 @@ def test_session_id_cwd_and_transcript_come_from_the_payload():
     assert host.cwd({"workspacePaths": []}, {}) == os.getcwd()
 
 
+@pytest.mark.parametrize("path", [1, True, 1.5, ["a"]])
+def test_a_transcript_path_that_is_not_a_string_is_no_transcript(path):
+    assert Antigravity().transcript({"transcriptPath": path}) == ""
+    assert Antigravity().transcript({"transcript_path": path}) == ""
+
+
+def test_an_integer_transcript_path_is_never_opened_as_a_file_descriptor(tmp_path, env):
+    # agy sends a string; `open()` would take a number as a descriptor and close it after the
+    # read (`1` is the hook's own stdout). A descriptor of this test's stands in for it.
+    held = tmp_path / "held.jsonl"
+    held.write_text("")
+    fd = os.open(held, os.O_RDONLY)
+    try:
+        host = Antigravity()
+        host.expand(dict(hook_payload(held, "SessionStart"), transcriptPath=fd), env)
+        got = host.expand(dict(hook_payload(held, "PreInvocation"), transcriptPath=fd), env)
+        os.fstat(fd)                            # still open
+        assert kinds(got) == [("UserPromptSubmit", "fix it", f"{CID}:1")]
+        assert got[0]["transcript_path"] == ""
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
 def test_detect_finds_agy_by_its_payload_and_leaves_the_others_alone():
     p = {"conversationId": CID, "transcriptPath": "/home/u/.gemini/antigravity-cli/brain/x/t"}
     assert isinstance(hosts.detect(p, {}), Antigravity)
