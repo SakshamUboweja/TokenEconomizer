@@ -140,6 +140,12 @@ class Host:
     def turn_key(self, p):
         return ""
 
+    def continues_turn(self, p):
+        """Is this prompt delivered inside the turn already running, rather than starting one?
+        Only where the agent is seen to do that; any other prompt with a turn still open means
+        that turn was interrupted."""
+        return False
+
     def is_subagent(self, p):
         return bool(p.get("agent_id"))
 
@@ -314,6 +320,12 @@ class ClaudeCode(Host):
 
     def turn_key(self, p):
         return str(p.get("prompt_id") or "")
+
+    def continues_turn(self, p):
+        # 2.1.323: a background task that ends while a turn runs reaches the model through
+        # UserPromptSubmit, as a `<task-notification>` with the running turn's own prompt_id.
+        prompt = p.get("prompt")
+        return isinstance(prompt, str) and prompt.lstrip().startswith("<task-notification>")
 
     def tool_call(self, p):
         name, args, text, code = super().tool_call(p)

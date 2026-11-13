@@ -300,11 +300,15 @@ class LiveController:
             outputs = self._inject_map(s, seen, block, "UserPromptSubmit", how)
             if outputs:
                 self.store.write("notices.json", seen)
-        if self.cfg.loopguard != "off":
+        key = self.host.turn_key(self.p)
+        if self.cfg.loopguard != "off" and not (
+                key and (s.get("turn") or {}).get("turn_key") == key
+                and self.host.continues_turn(self.p)):
             # A turn still open here never reached Stop -- the person interrupted it. Its
-            # outcome is unknown, so it is recorded but does not feed the envelope.
+            # outcome is unknown, so it is recorded but does not feed the envelope. (A
+            # background task's notice, delivered inside the running turn, leaves it open.)
             self._close_turn(s, stopped_normally=False)
-            s["turn"] = loopguard.TurnGuard(turn_key=self.host.turn_key(self.p)).to_dict()
+            s["turn"] = loopguard.TurnGuard(turn_key=key).to_dict()
         self._save(s)
         return merge_outputs(*outputs) if outputs else {}
 

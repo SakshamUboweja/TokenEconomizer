@@ -508,6 +508,45 @@ def test_only_turns_that_end_green_feed_the_envelope(env, repo):
     assert store_for(env, repo).read("envelope.json")["resolved_turns"] == [2]
 
 
+NOTIFICATION = ("<task-notification>\n<task-id>b02lubz0c</task-id>\n<status>completed</status>\n"
+                "</task-notification>")
+
+
+def test_a_background_task_notice_mid_turn_does_not_split_the_turn(env, repo):
+    """Claude Code (2.1.323) delivers a background task that ends while the turn runs through
+    UserPromptSubmit, with the running turn's prompt_id: the turn goes on, and ends green whole."""
+    base = {"session_id": "s", "transcript_path": "", "cwd": repo, "prompt_id": "p"}
+    bash = lambda cmd: _post(base, "Bash", {"command": cmd}, {"stdout": "x", "stderr": ""})
+    call(env, dict(base, hook_event_name="UserPromptSubmit", prompt="go"))
+    call(env, bash("sleep 4 && echo done"))
+    call(env, bash("sleep 12"))
+    call(env, dict(base, hook_event_name="UserPromptSubmit", prompt=NOTIFICATION))
+    call(env, bash("echo seen"))
+    call(env, dict(base, hook_event_name="Stop", stop_hook_active=False))
+    st = store_for(env, repo)
+    assert [(t["turn_key"], t["tool_calls"]) for t in st.read("sessions/s.json")["turns"]] == [
+        ("p", 3)]
+    assert st.read("envelope.json")["resolved_turns"] == [3]
+
+
+def test_a_new_prompt_still_closes_an_open_turn_as_interrupted(env, repo):
+    """A prompt that is not a task notice, or a notice under another prompt_id, starts a turn:
+    the open one never reached Stop and does not feed the envelope."""
+    base = {"session_id": "s", "transcript_path": "", "cwd": repo}
+    bash = lambda key: _post(dict(base, prompt_id=key), "Bash", {"command": "ls"}, {"stdout": "x"})
+    call(env, dict(base, prompt_id="a", hook_event_name="UserPromptSubmit", prompt="go"))
+    call(env, bash("a"))
+    call(env, dict(base, prompt_id="a", hook_event_name="UserPromptSubmit", prompt="again"))
+    call(env, bash("a"))
+    call(env, dict(base, prompt_id="b", hook_event_name="UserPromptSubmit", prompt=NOTIFICATION))
+    call(env, bash("b"))
+    call(env, dict(base, prompt_id="b", hook_event_name="Stop", stop_hook_active=False))
+    st = store_for(env, repo)
+    assert [(t["turn_key"], t["tool_calls"]) for t in st.read("sessions/s.json")["turns"]] == [
+        ("a", 1), ("a", 1), ("b", 1)]
+    assert st.read("envelope.json")["resolved_turns"] == [1]
+
+
 def test_subagent_tool_calls_do_not_reach_the_guard(env, repo):
     call(env, {"hook_event_name": "PostToolUse", "session_id": "s", "cwd": repo, "prompt_id": "p",
                "agent_id": "a1", "tool_name": "Bash", "tool_input": {"command": "ls"},
