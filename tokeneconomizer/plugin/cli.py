@@ -48,7 +48,7 @@ import os
 import sys
 import time
 
-from .. import loopguard
+from .. import loopguard, trace
 from . import (accounting, denylist, fold, history, hosts, paths, repomap, repos, sidecall,
                toolcheck)
 from .config import canonical, unset_config, write_config
@@ -463,8 +463,12 @@ def cmd_toolprune(args):
             left = toolcheck.verify_copilot(ctx.repo.root,
                                             denylist.applied_for(ctx.store, ctx.repo.root, host))
             if left is not None:
+                # No tools of a server Copilot never loads either (a typo, a server not
+                # configured): only a configured one's zero is a removal.
+                known = trace.copilot_mcp_servers(ctx.env)
                 print("checked with a local capture: " + ", ".join(
-                    f"{k} {'removed' if not v else f'still loaded ({v} tools)'}"
+                    f"{k} " + (f"still loaded ({v} tools)" if v else "removed" if k in known
+                               else "not loaded (no such server in mcp-config.json)")
                     for k, v in sorted(left.items())))
         if host == "codex" and added:
             if denylist.codex_project_trusted(ctx.repo.root) is False:

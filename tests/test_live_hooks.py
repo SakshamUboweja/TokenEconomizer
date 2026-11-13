@@ -1257,6 +1257,26 @@ def test_copilot_apply_and_restore_touch_only_the_plugins_own_servers(repo, tmp_
         os.path.join(repo, ".git", "info", "exclude")).read().split()
 
 
+def test_copilot_apply_does_not_call_a_server_it_never_loads_removed(env, repo, tmp_path,
+                                                                     monkeypatch, capsys):
+    """The local capture after `apply` has no tools of a server Copilot never loads either (a
+    typo, a server not configured), so its zero is no removal."""
+    from tokeneconomizer.plugin import cli
+    home = tmp_path / "copilot"
+    home.mkdir()
+    (home / "mcp-config.json").write_text(json.dumps({"mcpServers": {"echosrv": {}}}))
+    for k, v in dict(env, COPILOT_HOME=str(home)).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(toolcheck, "verify_copilot",
+                        lambda root, servers, cli="copilot": {s: 0 for s in servers})
+    assert cli.main(["--host", "copilot", "--cwd", repo, "toolprune", "apply", "echosvr",
+                     "echosrv"]) == 0
+    line = [ln for ln in capsys.readouterr().out.splitlines()
+            if ln.startswith("checked with a local capture")]
+    assert line == ["checked with a local capture: echosrv removed, echosvr not loaded "
+                    "(no such server in mcp-config.json)"]
+
+
 # ---- opencode ----------------------------------------------------------------------------
 def test_an_opencode_session_whose_copy_is_empty_is_folded_from_opencodes_export(
         env, repo, tmp_path, monkeypatch):
