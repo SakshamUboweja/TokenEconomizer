@@ -53,42 +53,50 @@ export function launch(
   return [process.env.TE_PYTHON || "python", [join(SCRIPTS, "te_bootstrap.py"), mode, ...args]];
 }
 
-/** Run one of the plugin's launchers with `input` on stdin; resolve to its stdout. */
+/** Run one of the plugin's launchers with `input` on stdin; resolve to its stdout, and its
+ * stderr with `withErr` (`/te`, where te's usage errors arrive); the hooks leave stderr unread.
+ * Both are empty when it could not be started or was stopped at the timeout. */
 function run(
   script: string,
   args: string[],
   input: string,
   mode: string,
   extra: Record<string, string> = {},
-): Promise<string> {
+  withErr = false,
+): Promise<{ out: string; err: string }> {
   return new Promise((resolve) => {
     let out = "";
+    let err = "";
     let child;
     try {
       const [program, argv] = launch(script, args);
       // UTF-8 mode as the launchers set it, for where they are bypassed (Windows).
       child = spawn(program, argv, {
         env: { ...process.env, PYTHONUTF8: "1", TE_PI_MODE: mode, ...extra },
-        stdio: ["pipe", "pipe", "ignore"],
+        stdio: ["pipe", "pipe", withErr ? "pipe" : "ignore"],
       });
     } catch {
-      resolve("");
+      resolve({ out: "", err: "" });
       return;
     }
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      resolve("");
+      resolve({ out: "", err: "" });
     }, HOOK_TIMEOUT_MS);
     // Decoded as a stream, so a character split across two chunks arrives whole.
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (d: string) => (out += d));
+    if (withErr) {
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (d: string) => (err += d));
+    }
     child.on("error", () => {
       clearTimeout(timer);
-      resolve("");
+      resolve({ out: "", err: "" });
     });
     child.on("close", () => {
       clearTimeout(timer);
-      resolve(out);
+      resolve({ out, err });
     });
     child.stdin.on("error", () => {});
     child.stdin.end(input);
@@ -98,7 +106,7 @@ function run(
 /** One dispatcher call; `{}` (no change) on any failure. */
 async function hook(payload: Record<string, unknown>, mode: string): Promise<any> {
   if (truthy(process.env.TE_SIDECALL) || truthy(process.env.TE_DISABLE)) return {};
-  const out = await run("te-hook", ["--host", "pi"], JSON.stringify(payload), mode);
+  const { out } = await run("te-hook", ["--host", "pi"], JSON.stringify(payload), mode);
   try {
     return JSON.parse(out.trim().split("\n").pop() || "{}") ?? {};
   } catch {
@@ -225,13 +233,21 @@ export default function tokeneconomizer(pi: ExtensionAPI) {
   pi.registerCommand("te", {
     description: "TokenEconomizer: status | microskills | config | repos (what it learned here, what it did)",
     handler: async (args, ctx) => {
-      const argv = (args || "status").trim().split(/\s+/).filter(Boolean);
+      // Blank arguments (`/te` followed by spaces) are `/te` alone: status.
+      const argv = (args ?? "").trim().split(/\s+/).filter(Boolean);
+      if (!argv.length) argv.push("status");
       // The session id lets `te status` say when this session is recorded under the repository
       // it started in rather than the one `ctx.cwd` is in now.
-      const out = await run("te", ["--host", "pi", "--cwd", ctx.cwd, ...argv], "", ctx.mode, {
-        TE_SESSION_ID: ctx.sessionManager.getSessionId(),
-      });
-      notify(ctx, out.trim() || "te: no output (is Python 3.10+ on PATH?)");
+      const { out, err } = await run(
+        "te",
+        ["--host", "pi", "--cwd", ctx.cwd, ...argv],
+        "",
+        ctx.mode,
+        { TE_SESSION_ID: ctx.sessionManager.getSessionId() },
+        true,
+      );
+      // te reports a usage error (and the launcher a missing Python) on stderr, with no stdout.
+      notify(ctx, out.trim() || err.trim() || "te: no output (is Python 3.10+ on PATH?)");
     },
   });
 }

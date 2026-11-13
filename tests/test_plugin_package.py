@@ -376,6 +376,42 @@ console.log(JSON.stringify([
     assert json.loads(run.stdout) == ["", facts, facts, "", "", facts]
 
 
+def test_pi_te_command_shows_tes_usage_error_and_defaults_blank_arguments_to_status(tmp_path):
+    """`/te` with a word te rejects shows te's own usage error, which argparse writes to stderr
+    with no stdout -- not the hint about Python that stands for a launcher that printed nothing
+    -- and `/te` followed only by spaces is `/te` alone: status. The extension's command
+    handler is run through Node against the checkout's launcher."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    ext = os.path.join(PLUGIN, "pi", "tokeneconomizer.ts")
+    work = tmp_path / "work"
+    work.mkdir()
+    script = """
+const { pathToFileURL } = await import("node:url");
+const { default: tokeneconomizer } = await import(pathToFileURL(process.argv[1]).href);
+const commands = {};
+tokeneconomizer({ on() {}, sendMessage() {}, registerCommand: (name, c) => (commands[name] = c) });
+const notes = [];
+const ctx = { cwd: process.argv[2], mode: "print", hasUI: true,
+              ui: { notify: (text) => notes.push(text) },
+              sessionManager: { getSessionId: () => "s" } };
+for (const args of ["stauts", "status --bogus", "   "]) await commands.te.handler(args, ctx);
+console.log(JSON.stringify(notes));
+"""
+    run = subprocess.run([node, "--experimental-strip-types", "--no-warnings",
+                          "--input-type=module", "-e", script, ext, str(work)],
+                         capture_output=True, text=True, timeout=120,
+                         env=_hook_env(tmp_path, TE_PYTHON=sys.executable))
+    if run.returncode and "strip-types" in run.stderr:
+        pytest.skip("this node cannot load TypeScript")
+    assert run.returncode == 0, run.stderr
+    typo, option, blank = json.loads(run.stdout)
+    assert "invalid choice: 'stauts'" in typo and "Python" not in typo
+    assert "unrecognized arguments: --bogus" in option and "Python" not in option
+    assert blank.startswith("TokenEconomizer --")
+
+
 def test_the_plugin_directory_is_also_a_pi_package():
     """One directory, three agents: Pi loads the extension its `pi` manifest names, and that
     extension drives the same launchers the Claude Code and Codex hooks run."""
