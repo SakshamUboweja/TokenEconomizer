@@ -155,6 +155,37 @@ def test_cursor_native_shell_json_output_positive_and_negative(tmp_path, cursor_
     ]
 
 
+def test_cursor_still_stuck_notice_is_relayed_to_the_model_once(cursor_env):
+    """Cursor's notice already asks the model to pass the line on; the guard's last rung must
+    not add the same relay again."""
+    repo, env, _ = cursor_env
+    env = dict(env, TE_LOOPGUARD="on")
+    base = {"conversation_id": "c-stuck", "workspace_roots": [repo]}
+
+    def turn(gen, calls):
+        b = dict(base, generation_id=gen)
+        run(dict(b, hook_event_name="beforeSubmitPrompt", prompt="go"), env, host_hint="cursor")
+        outs = [run(dict(b, hook_event_name="postToolUse", tool_use_id=f"{gen}-{i}",
+                         tool_name=name, tool_input=tin, tool_output=json.dumps(res)),
+                    env, host_hint="cursor") for i, (name, tin, res) in enumerate(calls)]
+        run(dict(b, hook_event_name="stop", status="completed"), env, host_hint="cursor")
+        return outs
+
+    for k in range(5):
+        turn(f"g{k}", [("Read", {"file_path": f"{repo}/a.py"}, {"content": "ok"})] * 8)
+    fail = "FAILED tests/test_a.py::test_x - AssertionError: assert 1 == 2"
+    outs = turn("stuck", [
+        ("Edit", {"file_path": f"{repo}/a.py", "old_string": "x", "new_string": "y"},
+         {"success": True}) if k % 2 == 0 else
+        ("Shell", {"command": "pytest -q"}, {"stdout": fail, "exitCode": 1})
+        for k in range(40)])
+    ctx = [o.get("additional_context") or "" for o in outs]
+    stuck = [c for c in ctx if "still looks stuck" in c]
+    assert len(stuck) == 1
+    assert stuck[0].count("still looks stuck") == 1
+    assert stuck[0].count("it does not change your task") == 1
+
+
 def test_notices_name_each_agents_side_call_command():
     from tokeneconomizer.plugin import sidecall
     hosts = ("claude", "codex", "copilot", "pi", "opencode", "cursor", "hermes")

@@ -403,6 +403,12 @@ def test_a_stuck_turn_is_redirected_through_an_ephemeral_message(tp, tmp_path, e
     steps = [s for o in outs for s in o.get("injectSteps", [])]
     assert steps and all(set(s) == {"ephemeralMessage"} for s in steps)
     assert any("Process check (automated)" in s["ephemeralMessage"] for s in steps)
+    # agy shows no hook message, so the still-stuck notice is relayed through the model: once.
+    stuck_steps = [s["ephemeralMessage"] for s in steps
+                   if "still looks stuck" in s["ephemeralMessage"]]
+    assert len(stuck_steps) == 1
+    assert stuck_steps[0].count("still looks stuck") == 1
+    assert stuck_steps[0].count("it does not change your task") == 1
 
 
 # ---- the side call -------------------------------------------------------------------------

@@ -402,8 +402,11 @@ class LiveController:
                     out = self.host.notice(text)
                     if self.host.relays_notices:
                         # Where the agent keeps hook messages out of the person's view, the
-                        # model passes the notice on in its reply, which they do see.
-                        out = merge_outputs(out, self.host.context(event, self.host.relay(text)))
+                        # model passes the notice on in its reply, which they do see. On Cursor
+                        # and Antigravity the notice already is that relay: send it once.
+                        relayed = self.host.context(event, self.host.relay(text))
+                        if out != relayed:
+                            out = merge_outputs(out, relayed)
         s["turn"] = g.to_dict()
         self._save(s)
         return out
