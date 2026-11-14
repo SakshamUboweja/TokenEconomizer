@@ -232,3 +232,23 @@ def test_off_everywhere_and_on_in_one_repository_runs_only_there(env, repo, tmp_
         run_session(env, checkout, sid, str(tmp_path / f"{sid}.jsonl"))
     assert os.listdir(os.path.join(home, "repos")) == [on]
     assert os.listdir(os.path.join(home, "repos", on)) != ["config.json"]   # it ran there
+
+
+@pytest.mark.parametrize("host,pairs,calls", [
+    ("claude", ["microskills=on"], True),
+    ("antigravity", ["microskills=on"], False),
+    ("droid", ["microskills=on"], False),
+    ("droid", ["microskills=on", "droid_sidecall=on"], True),
+])
+def test_micro_skills_on_says_it_calls_a_model_only_where_the_plugin_makes_one(
+        env, repo, monkeypatch, capsys, host, pairs, calls):
+    """The plugin makes no model call through Antigravity, nor through Droid until
+    `droid_sidecall` is on, so turning micro-skills on there must not say it will."""
+    from tokeneconomizer.plugin import cli
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("TE_DROID_SIDECALL", raising=False)
+    assert cli.main(["--host", host, "--cwd", repo, "config", "set", *pairs]) == 0
+    out = capsys.readouterr().out
+    assert ("calls a model through this agent" in out) is calls
+    assert (f"makes no model call through {host}" in out) is not calls

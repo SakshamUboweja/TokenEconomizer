@@ -51,7 +51,7 @@ import time
 from .. import loopguard
 from . import (accounting, denylist, fold, history, hosts, paths, repomap, repos, sidecall,
                toolcheck)
-from .config import canonical, unset_config, write_config
+from .config import canonical, load_config, unset_config, write_config
 from .context import LiveContext
 from .paths import state_root
 
@@ -631,9 +631,17 @@ def cmd_config(args):
               f"tried again")
     if "distiller" in str(cur.get("microskills", "")):
         every = cur.get("microskills_propose_every") or ctx.config.microskills_propose_every
-        print(f"note: micro-skills calls a model through this agent every {every} sessions to "
-              "propose facts, charged to the session's cost; `microskills=envfacts` learns "
-              "without model calls")
+        # The proposer calls a model only through this agent's runner (`fold.py`), read from
+        # the settings as now written: none on Antigravity, none on Droid until it is turned on.
+        written = load_config(ctx.root, repo_dir=os.path.dirname(ctx.store.base))
+        if sidecall.runner_for(ctx.host.name, written) is None:
+            until = " while `droid_sidecall` is off" if ctx.host.name == "droid" else ""
+            print(f"note: the plugin makes no model call through {ctx.host.name}{until}, so "
+                  "micro-skills learns only the facts that need no model call in its sessions")
+        else:
+            print(f"note: micro-skills calls a model through this agent every {every} sessions "
+                  "to propose facts, charged to the session's cost; `microskills=envfacts` "
+                  "learns without model calls")
     if cur.get("loopguard") == "stop":
         print("note: `stop` acts as `nudge`: the plugin never stops a turn; a turn still stuck "
               "after the redirect gets a notice saying how to stop it")
