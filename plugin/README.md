@@ -547,8 +547,9 @@ log a warning for the empty section of a session with no facts.
 
 ## Antigravity CLI
 
-Experimental: **micro-skills' LLM-free facts**, written against `agy` 1.5.1 on macOS and Linux
-(agy runs hook commands through `cmd /c` on Windows, and the launcher is a POSIX shell script).
+Experimental: **micro-skills' LLM-free facts** and the loop guard's backstop, written against
+`agy` 1.5.1 on macOS and Linux (agy runs hook commands through `cmd /c` on Windows, and the
+launcher is a POSIX shell script).
 
 **1. Install.** Build the self-contained plugin, which copies the package into it, and install the
 directory:
@@ -582,8 +583,10 @@ is off by default: `te --host antigravity config set microskills=envfacts`.
   versions leave token counts out of most of it.
 - The plugin makes no model call through `agy`: it has no option that runs a prompt with every
   tool off, and such a call's prompt holds text a repository controls. So micro-skills' paid
-  proposer never runs, and the loop guard, which needs a judge's verdict to act, never redirects
-  a turn.
+  proposer and the loop guard's judge never run. The loop guard redirects only at its backstop:
+  a turn past `loopguard.backstop_mult` (2.5) times the repository's usual length that also keeps
+  churning edits through the same failures gets a redirect, then a notice for you if it is still
+  stuck. `te --host antigravity config set loopguard=off` turns the loop guard off.
 
 ## Factory Droid
 

@@ -405,6 +405,18 @@ def test_a_stuck_turn_is_redirected_through_an_ephemeral_message(tp, tmp_path, e
     assert any("Process check (automated)" in s["ephemeralMessage"] for s in steps)
 
 
+def test_the_docs_say_the_backstop_still_redirects_on_agy():
+    """The judge never runs on agy, but the backstop needs no verdict (the test above), so the
+    READMEs' agy passages say the loop guard redirects there at its backstop, not that it is off."""
+    plugin_readme = (ROOT / "plugin/README.md").read_text(encoding="utf-8")
+    section = plugin_readme.split("\n## Antigravity CLI\n", 1)[1].split("\n## ", 1)[0]
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    entry = readme.split("**Antigravity CLI** (`agy`", 1)[1].split("\n**", 1)[0]
+    for text in (section, entry):
+        assert "redirects only at its backstop" in text
+        assert "never redirects" not in text and "the loop guard are off" not in text
+
+
 # ---- the side call -------------------------------------------------------------------------
 def test_antigravity_makes_no_side_call(monkeypatch):
     # agy has no option that runs a turn with every tool off, and a side call's prompt holds

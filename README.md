@@ -216,7 +216,8 @@ Confirm `tokeneconomizer` is enabled in `grok plugin list`, start `grok`, and ch
 The learned facts arrive with the session's first tool call, not at its start
 ([its limits](plugin/README.md#grok-build)).
 
-**Antigravity CLI** (`agy`; experimental; micro-skills' LLM-free facts only)
+**Antigravity CLI** (`agy`; experimental; micro-skills' LLM-free facts, and the loop guard at its
+backstop only)
 
 ```sh
 python scripts/build_plugin.py --out dist/marketplace
@@ -226,10 +227,10 @@ agy plugin install dist/marketplace/tokeneconomizer
 Start `agy` and send a prompt in a repository, then check with
 `~/.tokeneconomizer/bin/te --host antigravity status`. `agy` has no plugin commands, so the
 plugin's commands run from a terminal. The plugin makes no model call through `agy`, which has no
-option that runs a prompt with every tool off, so the paid proposer and the loop guard are off
-and tool pruning is not available. macOS and Linux only:
-on Windows `agy` runs hook commands through `cmd /c`, and this plugin's launcher is a POSIX shell
-script. See [its limits](plugin/README.md#antigravity-cli).
+option that runs a prompt with every tool off, so the paid proposer and the loop guard's judge
+are off (the loop guard redirects only at its backstop) and tool pruning is not available. macOS
+and Linux only: on Windows `agy` runs hook commands through `cmd /c`, and this plugin's launcher is
+a POSIX shell script. See [its limits](plugin/README.md#antigravity-cli).
 
 **opencode** (experimental)
 
