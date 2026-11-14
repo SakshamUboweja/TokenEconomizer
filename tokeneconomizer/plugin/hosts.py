@@ -163,6 +163,10 @@ class Host:
     # agent does not put hook messages where the person looks.
     relays_notices = False
 
+    # Whether `notice()` puts anything where the person sees it. A one-time notice shared by
+    # every agent (the carry-over in `repos.migration_notice`) is claimed only where it is.
+    shows_notices = True
+
     # Whether a resumed conversation still carries the context its first SessionStart added, so
     # the plugin need not add it again (Claude Code 2.1.307 and Codex 0.163.0 replay it).
     keeps_start_context = True
@@ -1246,6 +1250,7 @@ class Droid(Host):
     interrupt = "Interrupt the agent to stop it."
     prompt_context = True              # documented: UserPromptSubmit additionalContext
     relays_notices = True
+    shows_notices = False
     keeps_history = True
 
     def notice(self, text):

@@ -460,6 +460,25 @@ def test_a_session_start_says_once_what_carrying_state_over_moved(tmp_path, env)
     assert "progress" not in call(env, dict(start, session_id="c"), "copilot")
 
 
+@pytest.mark.parametrize("first", ["droid", "shadow"])
+def test_a_start_that_cannot_show_the_carry_over_notice_leaves_it_for_the_next(tmp_path, env,
+                                                                              first):
+    # Droid has no `systemMessage` and a shadow run shows nothing; the notice is said once across
+    # agents, so neither may use it up.
+    clone = git_repo(str(tmp_path / "other-name"), "https://github.com/acme/widget")
+    old = state(env, repos.legacy_key(clone, env))
+    legacy_session(old, "s1", transcript(tmp_path / "s1.jsonl", clone))
+    start = {"hook_event_name": "SessionStart", "cwd": clone, "source": "startup"}
+    if first == "droid":
+        out = call(env, dict(start, session_id="a"), "droid")
+    else:
+        out = call(dict(env, TE_SHADOW="1"), dict(start, session_id="a"), "claude")
+    assert "filed by repository" not in json.dumps(out)
+    out = call(env, dict(start, session_id="b"), "claude")
+    assert "now filed by repository (1 session(s) moved, 1 directory(ies) merged" in \
+        out["systemMessage"]
+
+
 # ---- carrying over each agent's state, from its own session logs --------------------------------
 # Every agent keeps its own subdirectory under a repository's state, learned from its own log
 # format; carrying state over must move each, and read where each agent's log says it started.

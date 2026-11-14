@@ -160,9 +160,12 @@ class LiveController:
                 f"again."))
             seen["sidecall_paused"] = pause["at"]
 
-        note = repos.migration_notice(self.ctx.root, self._cmd("repos"))
-        if note and not self.cfg.shadow:
-            outputs.append(self.host.notice(note))
+        # Said once across agents: claimed only by a start that shows it, so a Droid start or a
+        # shadow run leaves it for the next one.
+        if not self.cfg.shadow and self.host.shows_notices:
+            note = repos.migration_notice(self.ctx.root, self._cmd("repos"))
+            if note:
+                outputs.append(self.host.notice(note))
 
         if not self.cfg.shadow:
             try:
