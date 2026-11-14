@@ -16,6 +16,8 @@ import pytest
 from tokeneconomizer import trace
 from tokeneconomizer.plugin import hook, hosts, sidecall
 from tokeneconomizer.plugin.hosts import Antigravity, ClaudeCode, Cursor, merge_outputs
+from tokeneconomizer.plugin.paths import repo_identity, repo_state_dir
+from tokeneconomizer.plugin.store import Store
 
 CID = "4c748b89-0000-4000-8000-000000000001"
 ROOT = Path(__file__).resolve().parents[1]
@@ -316,6 +318,30 @@ def test_main_reads_the_event_from_the_command_line(tp, env):
               out_, dict(env, TE_MICROSKILLS="off"))
     assert json.loads(out_.getvalue()) == {}
     assert (Path(env["TOKENECONOMIZER_HOME"]) / "antigravity-sessions" / f"{CID}.json").exists()
+
+
+def test_a_resumed_conversation_is_not_given_the_facts_again(tp, tmp_path, env):
+    """The `systemMessage` step added at SessionStart persists: when agy starts a conversation
+    this plugin already keeps a cursor for, the conversation still has the facts."""
+    repo = tmp_path / "repo"
+    (repo / ".git" / "info").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (repo / ".git" / "config").write_text(
+        '[remote "origin"]\n\turl = https://github.com/acme/widget.git\n')
+    facts = "## Repository facts\n- run tests with python -m pytest\n"
+    Store(repo_state_dir(repo_identity(str(repo), env), "antigravity", env)).write(
+        "injection.json", {"rendered": facts, "rendered_ids": ["a"]})
+
+    def start(cid):
+        buf = io.StringIO()
+        hook.main(["--host", "antigravity", "--event", "SessionStart"], io.StringIO(json.dumps(
+            hook_payload(tp, "SessionStart", str(repo), conversationId=cid))), buf, env)
+        return [s["systemMessage"]["systemMessage"]
+                for s in json.loads(buf.getvalue()).get("injectSteps", [])]
+
+    assert any(facts in s for s in start(CID))
+    assert start(CID) == []                         # the same conversation, resumed
+    assert any(facts in s for s in start(CID[:-1] + "2"))    # a new one still gets them
 
 
 def test_a_sidecall_marker_makes_the_hook_do_nothing(tp, env):

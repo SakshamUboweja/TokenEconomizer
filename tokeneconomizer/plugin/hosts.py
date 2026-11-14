@@ -905,10 +905,14 @@ class Antigravity(Host):
         base = {"session_id": cid, "cwd": self.cwd(payload, env),
                 "transcript_path": self.transcript(payload)}
         if event == "SessionStart":
+            # agy's payload has no `source`: a conversation this plugin already keeps a cursor
+            # for is a resumed one, which still carries what its first start added.
             self._prune(env)
-            if self._load(env, cid) is None:
+            resumed = self._load(env, cid) is not None
+            if not resumed:
                 self._save(env, cid, self._fresh(base["transcript_path"]))
-            return [dict(base, hook_event_name="SessionStart", source="startup")]
+            return [dict(base, hook_event_name="SessionStart",
+                         source="resume" if resumed else "startup")]
         # The first call of a prompt carries no `invocationNum` (protojson drops a zero).
         first = event == "PreInvocation" and not payload.get("invocationNum")
         st = self._load(env, cid)
