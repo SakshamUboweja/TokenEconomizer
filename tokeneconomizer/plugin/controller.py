@@ -181,6 +181,12 @@ class LiveController:
                 outputs.extend(self._inject_map(s, seen, repomap.cached_block(self.ctx),
                                                 "SessionStart", "cached"))
                 s["repomap_done"] = True
+            elif (source not in ("startup", "new", "clear", "compact")
+                  and not self.host.keeps_start_context and s.get("repomap_text")
+                  and not self.cfg.shadow):
+                # As with the facts: the map this session started with, not the one cached now
+                # (it changes with HEAD), puts the rebuilt first message back as it was.
+                outputs.append(self.host.context("SessionStart", s["repomap_text"]))
 
         if seen != seen_before:
             self.store.write("notices.json", seen)
@@ -260,6 +266,8 @@ class LiveController:
         if not block or self.cfg.shadow:
             return []
         s["repomap_chars"] = len(block)
+        if event == "SessionStart" and not self.host.keeps_start_context:
+            s["repomap_text"] = block       # given again on a resume (session_start)
         out = [self.host.context(event, block)]
         if not seen.get("repomap"):
             out.append(self.host.notice(

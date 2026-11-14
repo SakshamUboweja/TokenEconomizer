@@ -10,7 +10,7 @@ import pytest
 
 from tokeneconomizer.plugin import repomap
 from tokeneconomizer.plugin.config import LiveConfig
-from tests.test_live_hooks import call, env, repo  # noqa: F401
+from tests.test_live_hooks import call, env, repo, store_for  # noqa: F401
 
 FAKE = """#!/bin/sh
 # A stand-in for a Python with aider: the import probe succeeds, and the generator prints a
@@ -85,6 +85,38 @@ def test_codex_and_start_mode_get_the_cached_map_at_session_start(env, repo, tmp
     assert all(_ctx_text(o) == "" for o in outs)
     start, outs = _session(_env(env, tmp_path, mode="start"), repo, "s9", ["Fix `x_y`"])
     assert _ctx_text(start).startswith("# Repository map") and _ctx_text(outs[0]) == ""
+
+
+def test_a_resumed_copilot_session_gets_back_the_map_it_started_with(env, repo, tmp_path,
+                                                                     monkeypatch):
+    """Copilot rebuilds a resumed conversation's first message without what SessionStart added,
+    the map with the facts. Both, as the session started with them, rebuild it as it was, though
+    the cached map has changed since; a session that started without a map gets none, and an
+    agent that keeps the start context gets nothing again."""
+    from tokeneconomizer.plugin.context import LiveContext
+    from tokeneconomizer.plugin.hosts import HOSTS
+    monkeypatch.setenv("COPILOT_HOME", str(tmp_path / "copilot-home"))
+    e = _env(env, tmp_path, mode="start")
+    store_for(e, repo, host="copilot").write(
+        "injection.json", {"rendered": "Facts:\n- one", "rendered_ids": ["a"]})
+    ctx = LiveContext.build(HOSTS["copilot"](), repo, e)
+
+    def set_map(text):
+        repomap._write_state(ctx, dict(repomap.read_state(ctx), map=text))
+
+    def start(sid, source, host="copilot", mode="start"):
+        return _ctx_text(call(dict(e, TE_REPOMAP=mode), {
+            "hook_event_name": "SessionStart", "session_id": sid, "source": source,
+            "cwd": repo}, host))
+    first = start("c1", "new")
+    assert first.startswith("Facts:\n- one") and "# Repository map" in first
+    set_map("pkg/later.py:\n| def moved_on():\n")
+    assert start("c1", "resume") == first                    # as it started, not as cached now
+    assert "moved_on" in start("c2", "new")
+    assert "# Repository map" not in start("c3", "new", mode="off")
+    assert "# Repository map" not in start("c3", "resume")   # started without a map
+    assert "# Repository map" in start("k1", "startup", host="claude")
+    assert start("k1", "resume", host="claude") == ""
 
 
 def test_shadow_and_off_inject_nothing(env, repo, tmp_path):
