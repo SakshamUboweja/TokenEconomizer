@@ -2,14 +2,15 @@
 
 How to install and use TokenEconomizer in Claude Code, Codex, the GitHub Copilot CLI, Pi, Cursor
 (experimental), Grok Build (experimental), opencode (experimental), Hermes Agent (experimental),
-the Antigravity CLI (experimental) and Factory Droid (experimental). What the plugin does and
-why is in the [main README](../README.md); its design and the verified behaviour of each agent are
-in [`docs/PLUGIN.md`](../docs/PLUGIN.md).
+the Antigravity CLI (experimental), Factory Droid (experimental) and Muse Code (Meta;
+experimental). What the plugin does and why is in the [main README](../README.md); its design and
+the verified behaviour of each agent are in [`docs/PLUGIN.md`](../docs/PLUGIN.md).
 
 - [Before you start](#before-you-start)
 - Install and use it on [Claude Code](#claude-code) · [Codex](#codex) ·
   [Copilot CLI](#copilot-cli) · [Pi](#pi) · [Cursor](#cursor) · [Grok Build](#grok-build) · [opencode](#opencode) ·
-  [Hermes Agent](#hermes-agent) · [Antigravity CLI](#antigravity-cli) · [Factory Droid](#factory-droid)
+  [Hermes Agent](#hermes-agent) · [Antigravity CLI](#antigravity-cli) · [Factory Droid](#factory-droid) ·
+  [Muse Code](#muse-code)
 - [What to expect](#what-to-expect) · [Commands](#commands) · [Settings](#settings)
 - [Repository map](#repository-map) · [Using with rtk](#using-with-rtk) ·
   [Model calls and API keys](#model-calls-and-api-keys) · [Troubleshooting](#troubleshooting)
@@ -627,6 +628,39 @@ Droid has no setting for none at all. With it off, `microskills=envfacts` still 
 model repeated it verbatim. The hook output is covered by tests; Droid appending it to the
 model's context has now been observed.
 
+## Muse Code
+
+Experimental, and not yet run against a real `muse`: the adapter follows Meta's documentation.
+Full notes, and what a live run still has to confirm, are in [`docs/MUSE.md`](../docs/MUSE.md).
+
+**1. Install.** Build the bundle (Muse refuses a package with a symlink, and `plugin/lib` is one
+in a checkout), install it, and approve its hooks:
+
+```sh
+python scripts/build_plugin.py
+muse plugins install dist/marketplace/tokeneconomizer
+muse plugins approve tokeneconomizer
+```
+
+Start a new Muse session: approved hooks load in the next one. After a rebuild, run
+`muse plugins update tokeneconomizer` and approve again (an approval covers the exact package).
+
+**2. Check it.** From a terminal in the repository: `~/.tokeneconomizer/bin/te --host muse status`
+and `~/.tokeneconomizer/bin/te --host muse doctor`.
+
+**3. Import earlier sessions.**
+
+```sh
+~/.tokeneconomizer/bin/te --host muse history import
+```
+
+**What works.** Micro-skills, the loop guard, the history import, the repository map and
+session cost (Muse's models are priced on the labelled fallback). **What does not:** tool
+pruning (Muse documents no per-repository tool setting). **Settings** come from the config file
+only: Muse clears its hooks' environment, so `TE_*` variables do not reach them. **Model calls**
+run `muse exec` with no built-in tool and are off until `config set muse_sidecall=on`; they use
+the credentials `muse login` stored, since a hook gets no `META_API_KEY`.
+
 ## What to expect
 
 The plugin works session by session: what it learns from a repository's earlier sessions is
@@ -713,6 +747,7 @@ How to run them:
 | Hermes Agent | none (run from a terminal) | `~/.tokeneconomizer/bin/te --host hermes <command>` |
 | Antigravity CLI | none (run from a terminal) | `~/.tokeneconomizer/bin/te --host antigravity <command>` |
 | Factory Droid | `/tokeneconomizer-<command>` | `~/.tokeneconomizer/bin/te --host droid <command>` |
+| Muse Code | none (run from a terminal) | `~/.tokeneconomizer/bin/te --host muse <command>` |
 
 `doctor`, `history` and `repomap` run from a terminal (or as `/te …` on Pi); there is no slash command or
 Codex skill for them.

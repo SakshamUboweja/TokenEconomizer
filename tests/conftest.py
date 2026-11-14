@@ -46,6 +46,11 @@ def _no_real_history(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home / ".claude"))
+    # Nor Muse Code's (`$XDG_DATA_HOME/muse`), nor a Muse session's own variables.
+    for k in ("XDG_DATA_HOME", "MUSE_SESSION_ID", "MUSE_THREAD_ID", "MUSE_PLUGIN_ROOT",
+              "MUSE_PLUGIN_DATA_DIR"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("TE_MUSE_DATA_DIR", str(home / ".local" / "share" / "muse"))
 
 
 @pytest.fixture(autouse=True)
@@ -58,5 +63,5 @@ def _no_model_calls(request, monkeypatch):
     if request.node.get_closest_marker("real_sidecalls"):
         return
     for name in ("claude_call", "codex_call", "copilot_call", "droid_call", "grok_call",
-                 "hermes_call", "pi_call"):
+                 "hermes_call", "muse_call", "pi_call"):
         monkeypatch.setattr(sidecall, name, lambda *a, **k: ("", None))

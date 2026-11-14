@@ -1,7 +1,7 @@
 # The plugin: design and verified agent behaviour
 
 How the plugin runs the three mechanisms inside your own Claude Code, Codex, Copilot CLI, Pi,
-opencode, Cursor, Grok Build, Hermes Agent, Antigravity CLI and Factory Droid sessions, through the hooks (on Pi, the extension events) each agent
+opencode, Cursor, Grok Build, Hermes Agent, Antigravity CLI, Factory Droid and Muse Code sessions, through the hooks (on Pi, the extension events) each agent
 exposes: what it does at each hook, what differs from the experiments and why, the agent
 behaviour each choice rests on, where its state lives, and its known limitations. The code is `tokeneconomizer/plugin/` (what
 the hooks run) and `plugin/` (the packaging for each agent). To install and use it, see
@@ -720,6 +720,62 @@ was not.)
   call also writes a session log of its own, so side calls stay off until `droid_sidecall` is
   on (or `TE_DROID_SIDECALL=1`).
 
+**Muse Code (Meta) -- adapter built 2026-11-12 from Meta's documentation, not yet run live:**
+
+* **Sources.** The Muse Code manual and changelog (newest entry 1.4.14) and the SDK's developer
+  guides (`@muse-code/sdk` 1.4.15; the plugin reference says it was checked against 1.3.0).
+  The session-record shapes come from Meta's own example records and a sanitized 0.2.1 session
+  published by a third-party reader. Nothing below has been observed on a real `muse`.
+* **Hooks** come from a native manifest, `.muse-plugin/plugin.json`, which Muse reads in
+  preference to the Claude and Codex manifests beside it. A native hook is an argv with no
+  shell, an argument containing `/` must be a file in the package, and two hooks may not name
+  the same file: hence one `sh` wrapper per event in `plugin/muse/hooks/`. Payloads are
+  Claude-shaped snake_case with `turn_id` on every event but `SessionStart` and `SessionEnd`;
+  Muse's tool names are its own (`bash`, `read_file`, `write_file`, `edit_file`, `search`, ...).
+* **Answers** use a closed schema: a key an event does not allow, or a top-level
+  `additionalContext`, rejects the whole answer, and stdout and stderr are each capped at 16 KiB
+  (the hook is killed past it). `Muse.render` keeps `systemMessage` and
+  `hookSpecificOutput.{hookEventName, additionalContext}` within 15,000 bytes; the wrappers
+  discard stderr. A `systemMessage` is a five-second status notice shown only while a turn
+  runs, so the still-stuck notice is also relayed through the model.
+* **Environment.** Hooks get only `HOME`, `PATH` and a few system variables, plus
+  `MUSE_SESSION_ID`, `MUSE_THREAD_ID` and the plugin's variables: no `TE_*` setting and no
+  proxy reach them. A hook whose thread differs from its session (a child or side thread) is
+  left alone.
+* **The session log** is `<data dir>/sessions/<YYYY>/<MM>/<DD>/<id>/session.jsonl`, an
+  append-only event log; Meta calls the layout an implementation detail. `transcript_path` is
+  null in every hook (1.4.18), so the adapter finds the log by session id. Usage is summed from
+  `model_completed` events, cached input taken out of `input_tokens`.
+* **A shell call's result** is a JSON object (`exit_code`, `terminal_status`, `output`, a
+  per-call `chunk_id`), in the log and in the hook: in `tool_response` for exit 0, in a
+  `PostToolUseFailure`'s `error` otherwise (`trace.muse_shell_result`). Other tools' failures
+  are text that starts `tool failed: `.
+* **Muse's reminder agents** run plugin hooks under their own `session_id`; their
+  `MUSE_THREAD_ID` differs from `MUSE_SESSION_ID`, so they are left alone.
+* **Tool events report the tool's own directory as `cwd`;** the adapter keeps the session's
+  directory from its first hook, so a call run elsewhere stays with this repository.
+* **Background work.** Muse gives the hooks it runs at exit about half a second and does not
+  wait for an asynchronous one, so a fold inside `SessionEnd` is cut short. The detached
+  `te fold` the hook starts (`start_new_session`) outlives the hook and `muse`, in `muse exec`
+  and in the terminal UI (1.4.18), so the session is folded as on the other agents, and the
+  judge, the history import and the map's refresh run detached too.
+* **Tool pruning** is not available: Muse documents no per-repository setting that removes a
+  built-in tool; its tool switches (`--disable-*`, `--preset`) are launch flags, and its MCP
+  `disabled_tools` is recorded but not acted on (1.3.0).
+* **Side call** (off until `muse_sidecall` is on): `muse exec` with `sidecall.MUSE_FLAGS`
+  (`--preset empty`, one model step, no session log) and `--prompt-file`, in a throwaway
+  directory whose `.te-sidecall` marker names a one-time token registered under the state root
+  while the call runs; `Muse.prepare` honours it because `TE_SIDECALL` cannot reach Muse's
+  hooks. The flags that leave the run with no tool are in the changelog only, and
+  `--preset empty` keeps configured MCP tools; a build that refuses a flag gets no weaker retry.
+  The answer is the `run_terminal` record's `payload.text`, the usage its `run_usage` record.
+  A hook has no `META_API_KEY`, so without `muse login` the call answers "missing meta
+  credentials", which pauses the side calls.
+* **Notices.** A `systemMessage` from a hook that completes while no turn runs shows nothing, so
+  the session-start notices (facts added, side calls paused) are not seen on Muse.
+* **Offline, tested here:** `tests/test_muse.py` and the guard test in `tests/test_live_hooks.py`.
+  `docs/MUSE.md` lists what a live run has to confirm.
+
 ## 4. State and privacy
 
 All state is local, under `$TOKENECONOMIZER_HOME` (default `~/.tokeneconomizer`), one directory
@@ -782,8 +838,8 @@ by default with the guard), of micro-skills (its proposer, when it is on), and, 
 it, of `toolprune measure` on Claude Code. Those calls send
 **digests** — command templates, edited file basenames, error lines with paths and numbers
 masked, never file contents — through your own agent CLI (`claude -p` / `codex exec` /
-`copilot -p` / `pi -p` / `opencode run` / `grok -p` / `hermes chat` / `droid exec`, the last only with
-`droid_sidecall` on), billed where your session is. The proposer keeps the digests of the last eight
+`copilot -p` / `pi -p` / `opencode run` / `grok -p` / `hermes chat` / `droid exec` / `muse exec`,
+the last two only with `droid_sidecall` / `muse_sidecall` on), billed where your session is. The proposer keeps the digests of the last eight
 sessions with its state, raw commands and output capped, so that each run sees more than the
 session that just ended. Sessions imported from Claude Code's history call no model, but their
 digests join that window, so the proposer's next call can include digests of sessions from
@@ -860,6 +916,10 @@ open-vocabulary. On a repository you do not trust, leave micro-skills off (the d
 * **Factory Droid (experimental)** — micro-skills, the loop guard and session cost, on 0.233.0
   (macOS). No tool pruning: the TUI has no persistent per-tool setting (Factory issue #65). Side
   calls are off until `droid_sidecall` is on; see `docs/DROID.md`.
+* **Muse Code (experimental)** — micro-skills, the loop guard and session cost, built from
+  Meta's documentation and checked against a live 1.4.18 (Linux). No tool pruning. Hooks see a
+  cleared environment, so settings come from the config file. Side calls are off until
+  `muse_sidecall` is on, and need credentials stored by `muse login`. macOS and Linux only (the hook wrappers are POSIX shell); see `docs/MUSE.md`.
 * **Known gaps:**
   * `codex exec` prints no hook messages, so a headless Codex run shows no notice; `te status`
     counts it afterwards. On Claude Code the notice reaches the conversation and `claude -p`'s
