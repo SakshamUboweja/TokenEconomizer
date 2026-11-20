@@ -254,6 +254,10 @@ class Host:
         return folder in {trace.claude_project_folder(root),
                           trace.claude_project_folder(os.path.realpath(root))}
 
+    def log_matches_id(self, path, sid):
+        """Is `path` the log of session `sid`? Most agents name the file after the session."""
+        return os.path.basename(path) == f"{sid}.jsonl"
+
 
 def _failure_response(p):
     """A PostToolUseFailure payload's `error` as a response; None for any other payload. A
@@ -1317,9 +1321,311 @@ class Droid(Host):
         return folder == os.path.abspath(root).replace("\\", "-").replace("/", "-")
 
 
+_MUSE_SHELL = {"bash", "powershell", "shell"}
+_MUSE_READ = {"read_file"}
+_MUSE_SEARCH = {"search"}
+_MUSE_EDIT = {"edit_file"}
+_MUSE_CREATE = {"write_file"}
+# The events whose answer may carry `hookSpecificOutput.additionalContext` (of those the plugin
+# registers); Muse rejects a hook's whole answer for a key an event does not allow.
+_MUSE_CONTEXT_EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse", "PostToolUseFailure")
+
+
+class Muse(Host):
+    """Muse Code, Meta's terminal coding agent (`muse`), through `plugin/.muse-plugin/`.
+
+    Muse runs plugin hooks from its native manifest: each hook is an argv (no shell), here a
+    small `sh` wrapper per event under `plugin/muse/hooks/`, with Claude-shaped snake_case JSON
+    on stdin (`session_id`, `turn_id`, `cwd`, `transcript_path`, `hook_event_name`, `tool_name`,
+    `tool_input`, `tool_response`). What differs from Claude Code, as Meta documents it:
+
+      * The answer schema is closed: an unknown key, a top-level `additionalContext`, or a key an
+        event does not allow rejects the hook's whole answer; stdout and stderr are each capped
+        at 16 KiB. `render` keeps only what the event allows, within that cap.
+      * The hook's environment is cleared to a short list (`HOME`, `PATH`, ...) plus
+        `MUSE_SESSION_ID`, `MUSE_THREAD_ID` and the plugin's own variables, so no `TE_*`
+        setting reaches it: settings come from the plugin's config file.
+      * Tool events report the tool's own directory as `cwd`; the session's is kept from its
+        start (`prepare`), so a call run elsewhere is still this repository's.
+      * `transcript_path` is null in every hook (1.4.18); the log is found under Muse's data
+        directory (`trace.muse_find_log`).
+      * A shell call's result is a JSON object (`trace.muse_shell_result`), in `tool_response`
+        when it exits 0 and in a PostToolUseFailure's `error` otherwise; `tool_call` reads the
+        output and the exit code from it.
+      * Muse's own helper agents (its reminder agents) run plugin hooks too, under their own
+        `session_id`, with `MUSE_THREAD_ID` set to it and `MUSE_SESSION_ID` to the top-level
+        session's; `prepare` leaves those alone.
+      * Muse gives the hooks it runs at exit about half a second (`shutdown_steps.hooks_ms` in
+        the log's `session.end`) and does not wait for an asynchronous one, so the fold cannot
+        run inside SessionEnd; the detached `te fold` it starts, in a session of its own,
+        outlives both the hook and the `muse` process (1.4.18, `muse exec` and the terminal UI).
+
+    Tool pruning is not available: Muse has no per-repository setting that removes a built-in
+    tool from the model's list (`denylist.supports` says so).
+    """
+    name = "muse"
+    prompt_context = True              # documented: UserPromptSubmit additionalContext
+    # A `systemMessage` is a five-second status notice, shown only while a turn runs: the
+    # model passes a still-stuck notice on as well.
+    relays_notices = True
+    keeps_history = True
+    CONTEXT_EVENTS = _MUSE_CONTEXT_EVENTS
+    OUTPUT_CAP = 15000                 # bytes of serialized answer; Muse kills a hook at 16 KiB
+    NOTICE_CAP = 1000                  # characters Muse keeps of a `systemMessage`
+    SIDECALL_MARK = ".te-sidecall"     # in the working directory of the plugin's own `muse exec`
+
+    def turn_key(self, p):
+        return str(p.get("turn_id") or "")
+
+    def env_session_id(self, env):
+        # Muse's shell tool sees the top-level chat's id (changelog 1.4.4).
+        return str(env.get("TE_SESSION_ID") or env.get("MUSE_SESSION_ID") or "")
+
+    def is_subagent(self, p):
+        return bool(p.get("agent_id"))
+
+    # -- the session's own directory and log, kept across its hooks ---------------------------
+    def _sidecar(self, sid, env):
+        from .paths import state_root
+        return os.path.join(state_root(env), "muse-sessions", f"{sid}.json")
+
+    def _read_sidecar(self, path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _write_sidecar(self, path, data):
+        try:
+            os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+            tmp = f"{path}.{os.getpid()}.tmp"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+    def _is_sidecall(self, cwd, env):
+        """Is this a session the plugin's own `muse exec` runs? Its hooks get no `TE_SIDECALL`
+        (Muse clears the environment), so the call's throwaway directory holds a marker naming
+        a one-time token, which the call registers under the plugin's state root for as long as
+        it runs (`sidecall.muse_call`). A marker a repository commits names no live token."""
+        if not isinstance(cwd, str) or not cwd:
+            return False
+        try:
+            with open(os.path.join(cwd, self.SIDECALL_MARK), encoding="ascii") as fh:
+                token = fh.read(64).strip()
+        except (OSError, ValueError):
+            return False
+        if not re.fullmatch(r"[0-9a-f]{32}", token):
+            return False
+        from .paths import state_root
+        try:
+            with open(os.path.join(state_root(env), "muse-sidecalls", token),
+                      encoding="utf-8") as fh:
+                return fh.read(4096) == os.path.realpath(cwd)
+        except (OSError, ValueError):
+            return False
+
+    def prepare(self, payload, env):
+        """The payload in the controller's terms; one with no `session_id` (answered `{}`) for a
+        call the plugin must leave alone: a child or side thread's, the plugin's own side
+        call's, or one whose session id is not a UUID (it names files)."""
+        p = dict(payload or {})
+        event = str(p.get("hook_event_name") or "")
+        sid = trace.muse_safe_session_id(str(p.get("session_id") or env.get("MUSE_SESSION_ID")
+                                             or ""))
+        thread, top = env.get("MUSE_THREAD_ID"), env.get("MUSE_SESSION_ID")
+        if sid is None or (thread and top and thread != top) or p.get("agent_id"):
+            p["session_id"] = ""
+            return p
+        p["session_id"] = sid
+        side = self._sidecar(sid, env)
+        kept = self._read_sidecar(side)
+        cwd = p.get("cwd") if isinstance(p.get("cwd"), str) and p.get("cwd") else None
+        changed = False
+        if event in ("SessionStart", "UserPromptSubmit"):
+            if cwd and (event == "SessionStart" or not kept.get("cwd")):
+                changed = kept.get("cwd") != cwd
+                kept["cwd"] = cwd
+        elif kept.get("cwd"):
+            p["cwd"] = kept["cwd"]          # a tool's own directory, or the end's
+        if self._is_sidecall(p.get("cwd"), env):
+            p["session_id"] = ""
+            return p
+        log = trace.muse_find_log(sid, p.get("transcript_path") or kept.get("transcript"), env)
+        if log:
+            p["transcript_path"] = log
+            if kept.get("transcript") != log:
+                kept["transcript"] = log
+                changed = True
+        else:
+            p["transcript_path"] = None
+        if event == "SessionEnd":
+            try:
+                os.remove(side)
+            except OSError:
+                pass
+        elif changed:
+            self._write_sidecar(side, kept)
+        return p
+
+    def session_state(self, env):
+        return {"muse_data_dir": trace.muse_data_dir(env)}
+
+    def tool_call(self, p):
+        name, args, text, code = super().tool_call(p)
+        low = name.lower()
+        if low in _MUSE_SHELL:
+            cmd = args.get("command", args.get("cmd", args.get("script", "")))
+            # The shell's result is a JSON object, in `tool_response` (exit 0) or in a
+            # PostToolUseFailure's `error` (any other exit), with a `chunk_id` that differs on
+            # every call: the output and the exit code are what the guard compares.
+            raw = p.get("tool_response")
+            raw = raw if raw is not None else p.get("error")
+            shell = trace.muse_shell_result(raw)
+            if shell is not None:
+                out, shell_code = shell
+                text = out[:RESULT_CAP]
+                code = shell_code if shell_code is not None else code
+            return "bash", {"command": str(cmd or "")}, text, code
+        path = args.get("file_path") or args.get("path") or ""
+        if low in _MUSE_READ:
+            return "Read", dict(args, file_path=path, path=path), text, code
+        if low in _MUSE_SEARCH:
+            return "Grep", args, text, code
+        if low in _MUSE_CREATE or low in _MUSE_EDIT:
+            return ("create" if low in _MUSE_CREATE else "edit"), dict(args, path=path), text, code
+        return name, args, text, code
+
+    def render(self, payload, out, ctx=None):
+        """The controller's answer in the closed schema Muse accepts for this event, within its
+        output cap: a `systemMessage` (at most `NOTICE_CAP` characters) and, on the events that
+        allow it, `hookSpecificOutput.{hookEventName, additionalContext}`; nothing else."""
+        event = str((payload or {}).get("hook_event_name") or "")
+        if event in ("Stop", "SessionEnd") or not isinstance(out, dict):
+            return {}
+        res = {}
+        msg = out.get("systemMessage")
+        if isinstance(msg, str) and msg.strip():
+            res["systemMessage"] = msg if len(msg) <= self.NOTICE_CAP else \
+                msg[:self.NOTICE_CAP - 3] + "..."
+        hso = out.get("hookSpecificOutput")
+        text = hso.get("additionalContext") if isinstance(hso, dict) else None
+        if event in self.CONTEXT_EVENTS and isinstance(text, str) and text.strip():
+            res["hookSpecificOutput"] = {"hookEventName": event,
+                                         "additionalContext": self._fit(res, event, text)}
+            if not res["hookSpecificOutput"]["additionalContext"]:
+                res.pop("hookSpecificOutput")
+        return res
+
+    def _fit(self, res, event, text):
+        """`text`, cut at a line boundary so the whole answer serializes within `OUTPUT_CAP`."""
+        def size(t):
+            return len(json.dumps(dict(res, hookSpecificOutput={
+                "hookEventName": event, "additionalContext": t})).encode("utf-8"))
+        if size(text) <= self.OUTPUT_CAP:
+            return text
+        lo, hi = 0, len(text)
+        while lo < hi:                       # the longest prefix that fits
+            mid = (lo + hi + 1) // 2
+            if size(text[:mid]) <= self.OUTPUT_CAP:
+                lo = mid
+            else:
+                hi = mid - 1
+        cut = text[:lo]
+        nl = cut.rfind("\n")
+        return (cut[:nl] if nl > 0 else cut).rstrip()
+
+    def headless(self, env, transcript=None):
+        # `muse exec` hands its hooks the same environment as the terminal UI; the wrong guess
+        # changes only the wording of a notice.
+        return False
+
+    def settle(self, transcript_path, wait_s=5.0, fresh_s=60.0):
+        """Wait briefly for Muse to finish the log: its writer lease (`.session.lock`) released,
+        or a `session.end` record last. A log idle for `fresh_s` is taken as it is."""
+        if not transcript_path:
+            return
+        lock = os.path.join(os.path.dirname(transcript_path), ".session.lock")
+        deadline = time.time() + wait_s
+        while time.time() < deadline:
+            try:
+                if not os.path.exists(lock):
+                    return
+                if time.time() - os.path.getmtime(transcript_path) > fresh_s:
+                    return
+                with open(transcript_path, "rb") as fh:
+                    fh.seek(max(0, os.path.getsize(transcript_path) - 65536))
+                    tail = [ln for ln in fh.read().splitlines() if ln.strip()]
+                if tail and b'"session.end"' in tail[-1]:
+                    return
+            except OSError:
+                return
+            time.sleep(0.25)
+
+    def complete(self, transcript_path, session_id, cwd=None, session=None):
+        """The session's log: the one recorded, else found again under the data directory the
+        session's first hook saw; `FoldLater` while it is nowhere (a session with no log yet)."""
+        if transcript_path and os.path.isfile(transcript_path):
+            return transcript_path
+        env = dict(os.environ)
+        if (session or {}).get("muse_data_dir"):
+            env["TE_MUSE_DATA_DIR"] = session["muse_data_dir"]
+        found = trace.muse_find_log(session_id, None, env)
+        if found:
+            return found
+        if time.time() - self.last_active(transcript_path, session or {}) < 7 * 86400:
+            raise FoldLater(session_id)
+        return transcript_path
+
+    def last_active(self, transcript_path, session):
+        try:
+            return os.path.getmtime(transcript_path)
+        except (OSError, TypeError):
+            return float((session or {}).get("updated") or (session or {}).get("started") or 0)
+
+    def mechanism_trace(self, transcript_path, workdir):
+        out = os.path.join(workdir, "muse_trace.jsonl")
+        n = trace.muse_session_to_claude(transcript_path, out)
+        return out if n is not None else None
+
+    def session_usage(self, transcript_path):
+        return trace.muse_session_usage(transcript_path)
+
+    def prompt_count(self, transcript_path):
+        return trace.muse_prompt_count(transcript_path)
+
+    # -- the history import --------------------------------------------------------------
+    def history(self, env, extra_dirs=()):
+        """Every top-level session under Muse's data directory, oldest first."""
+        return [{"session_id": r["id"], "folder": None, "path": r["path"],
+                 "mtime": r["mtime"], "size": r["size"]}
+                for r in trace.muse_sessions(None, env) if not r.get("parent")]
+
+    def log_head(self, path):
+        return trace.muse_log_head(path)
+
+    def safe_session_id(self, sid):
+        return trace.muse_safe_session_id(sid)
+
+    def prompt_turns(self, path):
+        return trace.muse_prompt_turns(path)
+
+    def folder_matches(self, root, folder):
+        return False                   # Muse files sessions by date, not by repository
+
+    def log_matches_id(self, path, sid):
+        return (os.path.basename(path) == "session.jsonl"
+                and os.path.basename(os.path.dirname(path)) == sid)
+
+
 HOSTS = {"claude": ClaudeCode, "codex": Codex, "copilot": Copilot, "droid": Droid,
-         "opencode": OpenCode, "pi": Pi, "cursor": Cursor, "hermes": Hermes, "grok": Grok,
-         "antigravity": Antigravity}
+         "muse": Muse, "opencode": OpenCode, "pi": Pi, "cursor": Cursor, "hermes": Hermes,
+         "grok": Grok, "antigravity": Antigravity}
 
 
 def default_host(env=None, recent=None):
@@ -1342,6 +1648,9 @@ def default_host(env=None, recent=None):
     # inside Droid is read as its own host.
     if env.get("FACTORY_SESSION_ID") or env.get("DROID_PLUGIN_ROOT"):
         return "droid"
+    # Muse Code's shell tool carries the top-level chat's id (changelog 1.4.4).
+    if env.get("MUSE_SESSION_ID"):
+        return "muse"
     return recent if recent in HOSTS else "claude"
 
 
@@ -1354,6 +1663,13 @@ def detect(payload, env=None, hint=None):
         return Antigravity()
     tp = str((payload or {}).get("transcript_path") or "")
     sp = tp.replace("\\", "/")              # a Windows path, with either separator
+    # Muse Code keeps its logs under `<data dir>/muse/sessions/`, and documents
+    # `MUSE_PLUGIN_ROOT` only for a plugin's hooks, whose environment it clears to an allowlist
+    # (that its shell tool never carries it is assumed, not documented). Before Codex's rule:
+    # Muse stamps `turn_id` too, and it installs a Claude plugin's hook file as it is, with no
+    # `--host`.
+    if "/muse/sessions/" in sp or (not tp and (env or {}).get("MUSE_PLUGIN_ROOT")):
+        return Muse()
     # grok runs Claude Code's plugin hooks, with no `--host`, so it is told from Claude Code
     # first: it alone sends `hookEventName` and keeps its sessions under `~/.grok/sessions`. Its
     # environment names it too, but hooks inherit the parent's environment (a Claude Code

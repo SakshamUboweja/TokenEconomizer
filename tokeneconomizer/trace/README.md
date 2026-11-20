@@ -16,6 +16,7 @@ session as an ordered list of `(tool_name, args, result_text, success)` calls th
 | `droid.py` | Factory Droid sessions: one JSONL file per session, its message records unwrapped into a Claude transcript; prompts; usage from the `<session id>.settings.json` beside it |
 | `grok.py` | Grok Build sessions: `updates.jsonl` (ACP updates) written as a Claude transcript; prompts and usage from its session files |
 | `hermes.py` | Hermes Agent sessions: a copy of a session's `state.db` rows without the conversation's words, written as a Claude transcript; usage |
+| `muse.py` | Muse Code (Meta) sessions: the append-only event log `sessions/<date>/<id>/session.jsonl`, its run events written as a Claude transcript; prompts; usage from its `model_completed` events |
 | `pi.py` | Pi's session tree: the active branch, written as a Claude transcript; usage |
 | `jsonl.py` | line and record readers shared by the above |
 

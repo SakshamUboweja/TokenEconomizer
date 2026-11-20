@@ -54,7 +54,7 @@ person can tune by hand:
   * repomap, repomap_tokens, repomap_python, repomap_timeout -- the opt-in repository map;
   * <agent>_paid_model          -- the model of the plugin's own calls on that agent, over
                                    `paid_model` (claude, codex, copilot, pi, opencode, cursor,
-                                   grok, hermes, droid);
+                                   grok, hermes, droid, muse);
   * claude_paid_effort, codex_paid_effort -- their reasoning effort on those two agents;
   * local_model, local_roles   -- run the named side calls (`judge`, `nudge`, `proposer`;
                                    default `judge`) on an on-device model instead of the
@@ -74,6 +74,10 @@ person can tune by hand:
   * droid_sidecall              -- on Droid, allow the plugin's own model calls. They run
                                    `droid exec`, which writes a session log of its own, so this
                                    is off by default: `microskills=envfacts` learns without it;
+  * muse_sidecall               -- on Muse Code, allow the plugin's own model calls (`muse exec`
+                                   with no built-in tool). Off by default, as on Droid; Muse
+                                   clears its hooks' environment, so this setting is the only
+                                   switch;
   * history_import              -- on Claude Code, fold a repository's sessions from before the
                                    plugin (Claude Code's own logs) once, at its first session
                                    start, when nothing is folded there yet. Off by default:
@@ -216,6 +220,7 @@ class LiveConfig:
     grok_paid_model: str = ""
     hermes_paid_model: str = ""
     droid_paid_model: str = ""
+    muse_paid_model: str = ""
     claude_paid_effort: str = ""
     codex_paid_effort: str = ""
     local_model: str = "off"
@@ -225,6 +230,7 @@ class LiveConfig:
     pi_cli: str = ""
     hermes_cli: str = ""
     droid_sidecall: bool = False
+    muse_sidecall: bool = False
     history_import: bool = False
     history_max_sessions: int = 200
     history_days: int = 365
@@ -352,7 +358,8 @@ class LiveConfig:
 _ENV = {"TE_MODE": "mode", "TE_SHADOW": "shadow",
         "TE_PAID_MODEL": "paid_model", "TE_VOCABULARY": "vocabulary",
         **{f"TE_{a.upper()}_PAID_MODEL": f"{a}_paid_model" for a in (
-            "claude", "codex", "copilot", "pi", "opencode", "cursor", "grok", "hermes", "droid")},
+            "claude", "codex", "copilot", "pi", "opencode", "cursor", "grok", "hermes", "droid",
+            "muse")},
         "TE_CLAUDE_PAID_EFFORT": "claude_paid_effort", "TE_CODEX_PAID_EFFORT": "codex_paid_effort",
         "TE_LOCAL_MODEL": "local_model", "TE_LOCAL_ROLES": "local_roles",
         "TE_LOCAL_JUDGE_CONFIDENCE": "local_judge_confidence",

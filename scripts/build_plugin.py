@@ -4,6 +4,9 @@
     python scripts/build_plugin.py [--out dist/marketplace] [--zip]
     python scripts/build_plugin.py --droid [--out dist/tokeneconomizer-droid]
 
+The default bundle is also a Muse Code package: Muse reads its `.muse-plugin/plugin.json` in
+preference to the other manifests, and refuses any symlink, which the bundle has none of.
+
 Why a build step at all. Loaded in place -- `claude --plugin-dir plugin/`, or this repository
 added as a local-directory marketplace -- the plugin finds the core package one level up, in the
 checkout itself. A marketplace INSTALL is different: Claude Code copies only the plugin directory
